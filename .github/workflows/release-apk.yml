@@ -1,0 +1,68 @@
+name: Development APK release
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: Notes for this build
+        required: false
+        type: string
+        default: Development APK
+permissions:
+  contents: write
+concurrency:
+  group: manual-development-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release prerequisites
+        run: python3 tools/preflight.py --mode release
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build development APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleDebug
+      - name: Verify and stage APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p deliverable
+          COUNT=$(find app/build/outputs/apk/debug -name '*.apk' -type f | wc -l)
+          if [[ "$COUNT" != 1 ]]; then echo "Expected one APK, got $COUNT"; exit 1; fi
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' -type f -print -quit)
+          SHORT=$(printf "%.7s" "$GITHUB_SHA")
+          cp "$APK" "deliverable/BaeminBlack-$SHORT.apk"
+          sha256sum deliverable/*.apk > deliverable/SHA256SUMS.txt
+          python3 tools/verify_apk.py --apk "deliverable/BaeminBlack-$SHORT.apk" --output deliverable/version-info.json
+      - name: Compare previous development APK metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREV=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep '^dev-' | head -n 1 || true)
+          if [[ -n "$PREV" ]]; then
+            mkdir -p old
+            if gh release download "$PREV" --pattern 'version-info.json' --dir old; then
+              python3 tools/verify_apk.py --apk deliverable/*.apk --previous old/version-info.json
+            fi
+          fi
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ inputs.release_notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT=$(printf "%.7s" "$GITHUB_SHA")
+          TAG="dev-$GITHUB_RUN_NUMBER-$SHORT"
+          gh release create "$TAG" deliverable/*.apk deliverable/SHA256SUMS.txt deliverable/version-info.json --target "$GITHUB_SHA" --title "Baemin Black dev APK ($TAG)" --notes "$NOTES" --prerelease
+          gh release view "$TAG" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"

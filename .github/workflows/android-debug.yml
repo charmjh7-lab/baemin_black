@@ -1,0 +1,48 @@
+name: Android debug APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-debug
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect Android source
+        id: detect
+        shell: bash
+        run: |
+          if [[ -f gradlew && ( -f settings.gradle.kts || -f settings.gradle ) && ( -f app/build.gradle.kts || -f app/build.gradle ) ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "No Android source yet; build skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/setup-java@v4
+        if: steps.detect.outputs.ready == 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        if: steps.detect.outputs.ready == 'true'
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.detect.outputs.ready == 'true'
+      - name: Assemble debug APK
+        if: steps.detect.outputs.ready == 'true'
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleDebug
+      - name: Upload debug APK artifact
+        if: steps.detect.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: baemin-black-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7

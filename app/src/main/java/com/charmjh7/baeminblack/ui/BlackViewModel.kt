@@ -98,11 +98,11 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
                 "textPresent" to text.isNotBlank().toString(), "textLength" to text.length.toString(),
                 "subjectPresent" to title.isNotBlank().toString(), "titlePresent" to extraTitle.isNotBlank().toString()))
             val allowedLinks = (ShareLinkParser.urls(text) + ShareLinkParser.urls(title) + ShareLinkParser.urls(extraTitle)).distinct()
-            val recent = if (allowedLinks.isNotEmpty()) RecentBaeminDetail.consume() else null
+            val recent = if (allowedLinks.isNotEmpty()) RecentBaeminDetail.consume(requireShareHandoff = true) else null
             work("share") {
-                diagnostics.event("share", recent?.reason ?: "RECENT_DETAIL_REJECTED", trace = trace,
+                diagnostics.event("share", recent?.reason ?: "RECENT_DETAIL_REJECTED", success = recent?.capture != null, trace = trace,
                     reason = recent?.reason ?: "NO_ALLOWED_BAEMIN_URL", details = mapOf("ageMs" to recent?.ageMs?.toString().orEmpty(),
-                        "screenSession" to recent?.capture?.screenSession.orEmpty(), "source" to recent?.capture?.source.orEmpty()), parentTrace = recent?.capture?.traceId.orEmpty())
+                        "departureKind" to recent?.departureKind.orEmpty(), "screenSession" to recent?.capture?.screenSession.orEmpty(), "source" to recent?.capture?.source.orEmpty()), parentTrace = recent?.capture?.traceId.orEmpty())
                 val draft = ShareImportHandler().receive(text, title, extraTitle, diagnostics, trace)
                 val observed = recent?.capture?.identity
                 val fits = observed != null && draft.conflicts.isEmpty() && com.charmjh7.baeminblack.matching.ShopMatcher.compatible(draft.identity, observed)

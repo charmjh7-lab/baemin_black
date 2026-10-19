@@ -159,6 +159,7 @@ class ShopScreenDetector {
         stats["detail.structure"] = "header=$headerGeometry,hierarchy=$hierarchy,contentRegions=${contentRegions.size},sections=${sectionParents.size},repeatedCards=$repeatedClickableCards,search=$searchStructure,continuity=$continuity"
         stats["selectedNode"] = best.index.toString()
         stats["candidate.${best.index}.decision"] = if (structuralDetail) "STRUCTURAL_DETAIL" else "AWAIT_DETAIL_EVIDENCE"
+        if (cards.isNotEmpty() && !structuralDetail) return result(ShopScreen.Listing(cards))
         if (!searchStructure && ((detailMarkers >= 1 && (strongTitle || nearbyMetadata)) || (nearbyMetadata && score(best) >= 7) || structuralDetail)) {
             return result(ShopScreen.Detail(DetectedShop(identity(best, visible), best.bounds, snapshot.viewport,
                 visible.filter { it.index != best.index && (it.text.isNotBlank() || it.clickable) && it.bounds.width() < snapshot.viewport.width() * .9 }.map { it.bounds })))

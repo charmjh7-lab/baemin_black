@@ -36,6 +36,15 @@ class ShareRegressionTest {
         assertEquals("RECENT_DETAIL_AVAILABLE",captured.reason)
         assertNull(RecentBaeminDetail.consume().capture)
     }
+    @Test fun ordinaryAppDepartureDoesNotAuthorizeAnUnrelatedLaterShare() {
+        RecentBaeminDetail.clear(); RecentBaeminDetail.remember(ShopIdentity("가게 A"),"s")
+        RecentBaeminDetail.leave("launcher")
+        assertEquals("RECENT_DETAIL_REJECTED",RecentBaeminDetail.consume(requireShareHandoff=true).reason)
+        RecentBaeminDetail.remember(ShopIdentity("가게 A"),"s")
+        RecentBaeminDetail.leave("com.android.intentresolver",shareChooser=true)
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(45))
+        assertNotNull(RecentBaeminDetail.consume(requireShareHandoff=true).capture)
+    }
     @Test fun expiryAndNewShopReplacementProtectAgainstStaleHandoff() {
         RecentBaeminDetail.clear()
         RecentBaeminDetail.remember(ShopIdentity("이전 가게"),"old")

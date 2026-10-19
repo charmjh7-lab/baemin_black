@@ -150,10 +150,17 @@ class BaeminAccessibilityService : AccessibilityService() {
                 mapOf("previousPackage" to previous.packageName.orEmpty(), "newPackage" to decision.packageName.orEmpty(),
                     "previousWindow" to previous.window.toString(), "newWindow" to decision.window.toString(), "active" to decision.active.toString(),
                     "rootPackage" to rootPackage.orEmpty(), "applicationPackage" to applicationPackage.orEmpty(), "eventPackage" to event?.packageName?.toString().orEmpty(),
-                    "ownOverlay" to own.toString(), "reason" to decision.reason))
+                    "ownOverlay" to own.toString(), "eventClass" to event?.className?.toString().orEmpty(), "reason" to decision.reason))
         }
         foreground = decision
         if (!decision.active) {
+            val chooser = event?.className?.toString()?.let { it.contains("ChooserActivity", true) || it.contains("ResolverActivity", true) } == true || event?.packageName?.toString() == "com.android.intentresolver"
+            val currentBinding = binding
+            if (chooser && previous.active && !contentDirty && currentBinding != null && currentBinding.token == gate.generation && currentBinding.window == previous.window) {
+                RecentBaeminDetail.remember(currentBinding.shop.identity, "${log.sessionId}:$activeWindow:${gate.generation}", "CONFIRMED_SHARE_HANDOFF", activeWindow, currentBinding.trace)
+                log.event("share", "RECENT_DETAIL_HANDOFF_PREPARED", trace = currentBinding.trace, details = mapOf("window" to activeWindow.toString()))
+            }
+            RecentBaeminDetail.leave(decision.packageName?.takeIf { it != TARGET_PACKAGE }, chooser)
             if (targetActive || activeWindow >= 0) deactivate(decision.reason)
             return false
         }

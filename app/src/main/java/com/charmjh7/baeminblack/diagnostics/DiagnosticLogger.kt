@@ -21,6 +21,9 @@ import java.util.concurrent.atomic.AtomicLong
     val kind: String, val stage: String, val status: String, val success: Boolean,
     val reason: String = "", val durationMs: Long = 0, val details: Map<String, String> = emptyMap(), val stack: String = ""
 )
+internal fun DiagnosticEvent.occurrences(): Int = if (kind == "AGGREGATE") (details["repeatCount"] ?: details["count"])?.toIntOrNull() ?: 1 else 1
+internal fun List<DiagnosticEvent>.stageCounts() = groupBy { "${it.stage}/${it.status}/${it.success}" }.mapValues { (_, events) -> events.sumOf { it.occurrences() } }
+internal fun List<DiagnosticEvent>.reasonCounts() = filter { it.reason.isNotBlank() }.groupBy { it.reason }.mapValues { (_, events) -> events.sumOf { it.occurrences() } }
 data class DiagnosticView(val events: List<DiagnosticEvent> = emptyList(), val bytes: Long = 0,
     val counts: Map<String, Int> = emptyMap(), val reasons: Map<String, Int> = emptyMap(), val snapshots: List<String> = emptyList())
 
@@ -35,7 +38,7 @@ class DiagnosticLogger(context: Context, private val maxBytes: Long = 10L * 1024
     private val viewState = MutableStateFlow(DiagnosticView())
     val view = viewState.asStateFlow()
     val detailedUntil = MutableStateFlow(0L)
-    private var textConsent = false
+    @Volatile private var textConsent = false
     private var timeout: Job? = null
     private var lastSnapshot = 0L
     private data class Repeated(val first: DiagnosticEvent, var last: DiagnosticEvent, var count: Int)
@@ -59,17 +62,17 @@ class DiagnosticLogger(context: Context, private val maxBytes: Long = 10L * 1024
             if (previous != null && item.elapsedRealtime - previous.first.elapsedRealtime < 1000) {
                 previous.count++; previous.last = item
             } else {
-                flushRepeats(); append(item); repeats[key] = Repeated(item, item, 0)
+                flushRepeats(expiredOnly = true); append(item); repeats[key] = Repeated(item, item, 0)
             }
         }.isSuccess) dropped.incrementAndGet()
     }
-    private fun flushRepeats() {
-        repeats.values.filter { it.count > 0 }.forEach { repeat ->
+    private fun flushRepeats(expiredOnly: Boolean = false) {
+        val selected = repeats.filterValues { !expiredOnly || SystemClock.elapsedRealtime() - it.first.elapsedRealtime >= 1000 }.keys.toList()
+        selected.mapNotNull { repeats.remove(it) }.filter { it.count > 0 }.forEach { repeat ->
             append(repeat.last.copy(eventId = UUID.randomUUID().toString(), kind = "AGGREGATE",
                 details = repeat.last.details + mapOf("repeatCount" to repeat.count.toString(), "firstTime" to repeat.first.time,
                     "lastTime" to repeat.last.time, "firstElapsed" to repeat.first.elapsedRealtime.toString(), "lastElapsed" to repeat.last.elapsedRealtime.toString())))
         }
-        repeats.clear()
     }
     private fun append(event: DiagnosticEvent) {
         val files = eventFiles()
@@ -111,8 +114,7 @@ class DiagnosticLogger(context: Context, private val maxBytes: Long = 10L * 1024
     private fun refreshNow() {
         val events = readEvents()
         viewState.value = DiagnosticView(events.takeLast(2000), files().sumOf { it.length() },
-            events.groupingBy { "${it.stage}/${it.status}/${it.success}" }.eachCount(),
-            events.filter { it.reason.isNotBlank() }.groupingBy { it.reason }.eachCount(),
+            events.stageCounts(), events.reasonCounts(),
             File(directory, "snapshots").listFiles().orEmpty().map { it.name }.sortedDescending())
     }
     suspend fun <T> serialized(block: suspend () -> T): T {

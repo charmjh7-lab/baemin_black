@@ -22,9 +22,9 @@ class DiagnosticExporter(private val context: Context, private val logger: Diagn
             put("detailedUntilElapsed", logger.detailedUntil.value); put("memoContentIncluded", false)
         }
         val summary = buildJsonObject {
-            put("events", events.size)
-            put("stages", JsonObject(events.groupingBy { "${it.stage}/${it.status}/${it.success}" }.eachCount().mapValues { JsonPrimitive(it.value) }))
-            put("reasons", JsonObject(events.filter { it.reason.isNotBlank() }.groupingBy { it.reason }.eachCount().mapValues { JsonPrimitive(it.value) }))
+            put("events", events.sumOf { it.occurrences() }); put("storedLines", events.size)
+            put("stages", JsonObject(events.stageCounts().mapValues { JsonPrimitive(it.value) }))
+            put("reasons", JsonObject(events.reasonCounts().mapValues { JsonPrimitive(it.value) }))
         }
         val temp = File.createTempFile("diagnostics-", ".zip", context.cacheDir)
         try {

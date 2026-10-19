@@ -39,6 +39,14 @@ class OverlayPolicyTest {
         assertEquals(250L,scheduler.deadline(1000))
         scheduler.started(); assertEquals(1085L,scheduler.deadline(1000))
     }
+    @Test fun staleButtonCannotTargetAnotherShopOrWindow() {
+        val shop = ShopIdentity("치킨", "강남점", "1")
+        val target = ActionTarget(shop, 4, 10)
+        assertTrue(target.accepts(shop, 4, 10))
+        assertFalse(target.accepts(shop.copy(branch = "서초점"), 4, 10))
+        assertFalse(target.accepts(shop, 5, 10)); assertFalse(target.accepts(shop, 4, 11))
+        assertFalse(target.accepts(null, 4, 10))
+    }
     @Test fun scrollAndTransitionInvalidateOldResults() {
         val state = ScrollBadgeState(); val original = state.generation
         state.scroll(100); assertFalse(state.mayShow(original,280))

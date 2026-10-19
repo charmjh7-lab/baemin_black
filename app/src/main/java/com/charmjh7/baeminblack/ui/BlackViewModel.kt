@@ -31,14 +31,14 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
     fun clearDiagnostics() = work { diagnostics.clear() }
     fun deleteSnapshots() = work { diagnostics.deleteSnapshots() }
     suspend fun readSnapshot(name: String) = diagnostics.snapshotText(name)
-    fun exportDiagnostics(uri: Uri, snapshots: Boolean) = work {
+    fun exportDiagnostics(uri: Uri, snapshots: Boolean) = work("diagnostic_export") {
         com.charmjh7.baeminblack.diagnostics.DiagnosticExporter(app, diagnostics).export(uri, snapshots)
         message = "진단 ZIP을 저장하고 다시 열어 확인했어요."
     }
     fun draftShop() = Shop(id = field("draft_id"), name = field("draft_name"), branch = field("draft_branch"), shopNo = field("draft_no").ifBlank { null })
     fun cancelNote(shopId: String) { go(if (field("route") == "quick_note") "main" else "detail", shopId) }
     val settings = app.settings.flow
-    val rows = repo.shops.map<List<ShopWithNotes>, List<ShopWithNotes>?> { it }.catch { message = "기록을 읽지 못했어요. 앱을 다시 열어 주세요."; emit(emptyList()) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val rows = repo.shops.map<List<ShopWithNotes>, List<ShopWithNotes>?> { it }.catch { diagnostics.event("repository", "OBSERVE_FAILED", false, "ROOM_OBSERVE_ERROR", error = it); message = "기록을 읽지 못했어요. 앱을 다시 열어 주세요."; emit(emptyList()) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
     val route = saved.getStateFlow("route", "main")
     val selected = saved.getStateFlow("selected", "")
     val noteId = saved.getStateFlow("note", "")
@@ -52,11 +52,11 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
         saved["draft_link"] = link; saved["draft_text"] = text; saved["draft_id"] = UUID.randomUUID().toString()
         go("shop", "")
     }
-    fun work(block: suspend () -> Unit) {
+    fun work(stage: String = "app_operation", block: suspend () -> Unit) {
         if (busy) return
         busy = true
         viewModelScope.launch {
-            try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { diagnostics.event("app_operation", "FAILED", false, "APP_OPERATION_ERROR", error = e); message = e.message?.takeIf { it.length < 200 } ?: "작업을 완료하지 못했어요. 다시 시도해 주세요." } finally {
+            try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { diagnostics.event(stage, "FAILED", false, "${stage.uppercase()}_ERROR", trace = field("active_trace").ifBlank { diagnostics.sessionId }, error = e); message = e.message?.takeIf { it.length < 200 } ?: "작업을 완료하지 못했어요. 다시 시도해 주세요." } finally {
                 busy = false
                 queuedIntent?.let { next -> queuedIntent = null; handleIntent(next, true) }
             }
@@ -72,6 +72,7 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
         if (!fresh && field("last_intent") == key) return
         if (busy) { queuedIntent = Intent(intent); return }
         saved["last_intent"] = key
+        saved["active_trace"] = intent.getStringExtra("trace_id") ?: diagnostics.trace()
         val quick = intent.getStringExtra("quick_action")
         if (quick == "diagnostics") { go("diagnostics"); return }
         if (quick == "manual") { newShop(); return }
@@ -85,7 +86,7 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
             diagnostics.event("memo", "EDITOR_OPENED", trace = intent.getStringExtra("trace_id") ?: diagnostics.sessionId)
             return
         }
-        if (text.isNotBlank()) work {
+        if (text.isNotBlank()) work("share") {
             // Capture before the network lookup: the Android chooser may outlive the short validity window.
             val observed = if (ShareLinkParser.urls(text).isNotEmpty()) RecentBaeminDetail.consumeFresh() else null
             val draft = ShareImportHandler().receive(text, title)
@@ -102,11 +103,13 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
         } else if (intent.hasExtra("shop_id")) go("detail", intent.getStringExtra("shop_id").orEmpty())
         else if (intent.hasExtra("shop_name")) newShop(intent.getStringExtra("shop_name").orEmpty(), intent.getStringExtra("shop_branch").orEmpty(), intent.getStringExtra("shop_no").orEmpty())
     }
-    fun saveShop(shop: Shop, memo: String) = work { val id = repo.saveShop(shop, memo); go("detail", id) }
-    fun saveNote(note: Note, photos: List<Uri>) = work {
+    fun saveShop(shop: Shop, memo: String) = work("storage") { val id = repo.saveShop(shop, memo); go("detail", id) }
+    fun saveNote(note: Note, photos: List<Uri>) = work("storage") {
         val draft = if (field("route") == "quick_note") draftShop() else null
-        val id = repo.saveNote(note, photos, draft); go("detail", id)
-        diagnostics.event("memo", "UI_SAVE_CONFIRMED")
+        val trace = field("active_trace").ifBlank { diagnostics.trace() }
+        diagnostics.event("memo", "SAVE_BUTTON_CLICK", trace = trace)
+        val id = repo.saveNote(note, photos, draft, trace); go("detail", id)
+        diagnostics.event("memo", "UI_SAVE_CONFIRMED", trace = trace)
     }
     fun status(shop: Shop, status: ShopStatus) = work { repo.saveShop(shop.copy(status = status)) }
     fun deleteNote(note: Note) = work { repo.deleteNote(note); message = "기록을 삭제했어요." }

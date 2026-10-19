@@ -28,7 +28,7 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore, private val l
             shop.id
         }
     } }
-    suspend fun saveNote(note: Note, newPhotos: List<Uri>, draft: Shop? = null): String = withContext(Dispatchers.IO) { lock.withLock {
+    suspend fun saveNote(note: Note, newPhotos: List<Uri>, draft: Shop? = null, trace: String = logger?.trace().orEmpty()): String = withContext(Dispatchers.IO) { lock.withLock {
         LocalDate.parse(note.date)
         require(note.rating == null || note.rating in 1..5) { "만족도는 1~5로 입력해 주세요." }
         require(note.body.isNotBlank() || note.title.isNotBlank() || note.menu.isNotBlank() || note.photos.isNotEmpty() || newPhotos.isNotEmpty()) { "메모나 사진을 추가해 주세요." }
@@ -36,7 +36,6 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore, private val l
         try {
             newPhotos.forEach { copied += media.copy(it) }
             val old = db.dao().note(note.id)
-            val trace = logger?.trace().orEmpty()
             logger?.event("storage", "NOTE_TRANSACTION_STARTED", trace = trace)
             val shopId = db.withTransaction {
                 val target = if (draft != null) {
@@ -50,7 +49,7 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore, private val l
             logger?.event("storage", "NOTE_TRANSACTION_COMMITTED", trace = trace)
             removeUnused(old?.photos.orEmpty() - note.photos.toSet())
             shopId
-        } catch (e: Exception) { logger?.event("storage", "NOTE_TRANSACTION_FAILED", false, "ROOM_OR_MEDIA_ERROR", error = e); media.remove(copied); throw e }
+        } catch (e: Exception) { logger?.event("storage", "NOTE_TRANSACTION_FAILED", false, "ROOM_OR_MEDIA_ERROR", trace = trace, error = e); media.remove(copied); throw e }
     } }
     private suspend fun resolve(identity: com.charmjh7.baeminblack.matching.ShopIdentity): Shop? {
         val all = db.dao().shops()
@@ -59,7 +58,7 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore, private val l
             (identity.branch.isBlank() || it.branch.isBlank() || ShopMatcher.normalize(it.branch) == ShopMatcher.normalize(identity.branch)) }) { "같은 상호의 기록을 확인한 뒤 직접 등록해 주세요." }
         return match
     }
-    data class StatusUndo(val before: Shop?, val after: Shop, val noteIds: Set<String>)
+    data class StatusUndo(val before: Shop?, val after: Shop, val notes: List<Note>)
     suspend fun quickStatus(identity: com.charmjh7.baeminblack.matching.ShopIdentity, status: ShopStatus, trace: String): StatusUndo = withContext(Dispatchers.IO) { lock.withLock {
         logger?.event("storage", "TRANSACTION_STARTED", trace = trace)
         try {
@@ -70,7 +69,7 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore, private val l
                 val after = (before ?: Shop(name = identity.name, branch = identity.branch, shopNo = identity.shopNo)).copy(
                     status = status, updatedAt = maxOf(System.currentTimeMillis(), (before?.updatedAt ?: 0) + 1))
                 db.dao().put(after)
-                StatusUndo(before, after, db.dao().notes().filter { it.shopId == after.id }.map { it.id }.toSet())
+                StatusUndo(before, after, db.dao().notes().filter { it.shopId == after.id }.sortedBy { it.id })
             }
             logger?.event("storage", if (ticket.before == null) "SHOP_CREATED" else "SHOP_UPDATED", trace = trace)
             logger?.event("storage", "TRANSACTION_COMMITTED", trace = trace)
@@ -80,8 +79,8 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore, private val l
     suspend fun undo(ticket: StatusUndo, trace: String): Boolean = withContext(Dispatchers.IO) { lock.withLock {
         val restored = db.withTransaction {
             val current = db.dao().shop(ticket.after.id)
-            val notes = db.dao().notes().filter { it.shopId == ticket.after.id }.map { it.id }.toSet()
-            if (current != ticket.after || notes != ticket.noteIds) false
+            val notes = db.dao().notes().filter { it.shopId == ticket.after.id }.sortedBy { it.id }
+            if (current != ticket.after || notes != ticket.notes) false
             else { if (ticket.before != null) db.dao().put(ticket.before.copy(updatedAt = maxOf(System.currentTimeMillis(), ticket.after.updatedAt + 1)))
                 else if (notes.isEmpty()) db.dao().deleteShop(ticket.after.id) else return@withTransaction false
                 true

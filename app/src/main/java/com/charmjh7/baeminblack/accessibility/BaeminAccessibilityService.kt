@@ -45,7 +45,8 @@ class BaeminAccessibilityService : AccessibilityService() {
     private var eventCount = 0
     private var firstEventAt = 0L
     private var lastEventAt = 0L
-    private var lastAggregate = 0L
+    private var contentDirty = false
+    private var lastAnalysisStarted = 0L
     private lateinit var badges: BadgeOverlayController
     private lateinit var detail: DetailOverlayController
     private lateinit var status: ServiceStatusOverlayController
@@ -69,9 +70,9 @@ class BaeminAccessibilityService : AccessibilityService() {
         log.event("service", "CONNECT_STARTED")
         if (::status.isInitialized) { deactivate("RECONNECTED"); badges.destroy() }
         connected = true
-        badges = BadgeOverlayController(this, log, ::overlayResult)
-        detail = DetailOverlayController(this, log, ::overlayResult)
-        status = ServiceStatusOverlayController(this, log, ::overlayResult)
+        badges = BadgeOverlayController(this, log) { ok, reason -> overlayResult("badge", ok, reason) }
+        detail = DetailOverlayController(this, log) { ok, reason -> overlayResult("detail", ok, reason) }
+        status = ServiceStatusOverlayController(this, log) { ok, reason -> overlayResult("status", ok, reason) }
         health.change { it.copy(service = StageStatus("SERVICE_CONNECTED"), error = "") }
         log.event("service", "SERVICE_CONNECTED")
         if (!registered) {
@@ -142,11 +143,11 @@ class BaeminAccessibilityService : AccessibilityService() {
                 if (gate.remaining(SystemClock.uptimeMillis()) == 0L) log.event("scheduler", "SCROLL_STARTED")
                 cancelAnalysis("SCROLL_IN_PROGRESS"); gate.scroll(SystemClock.uptimeMillis()); binding = null
                 badges.hide("SCROLL_IN_PROGRESS"); detail.hide("SCROLL_IN_PROGRESS"); RecentBaeminDetail.clear()
-                health.change { it.copy(screen = StageStatus("SHOP_UNRECOGNIZED"), shopLabel = "", matching = StageStatus("NOT_MATCHED"), overlay = StageStatus("HIDDEN")) }
+                health.change { it.copy(screen = StageStatus("SHOP_UNRECOGNIZED"), shopLabel = "", matching = StageStatus("NOT_MATCHED"), overlay = StageStatus("HIDDEN"), overlays = emptyMap()) }
                 showStatus(); schedule(ScrollBadgeState.SCROLL_SETTLE_MS)
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> { invalidate("SCREEN_TRANSITION"); showStatus(); schedule(85) }
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> { badges.hide("CONTENT_CHANGED"); schedule(85) }
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> { contentDirty = true; badges.hide("CONTENT_CHANGED"); schedule(85) }
         }
     }
     private fun activate(window: Int) {
@@ -168,7 +169,7 @@ class BaeminAccessibilityService : AccessibilityService() {
     private fun invalidate(reason: String) {
         cancelAnalysis(reason); gate.invalidate(); binding = null; undoTicket = null; RecentBaeminDetail.clear()
         if (::badges.isInitialized) { badges.hide(reason); detail.hide(reason) }
-        health.change { it.copy(screen = StageStatus("SHOP_UNRECOGNIZED"), matching = StageStatus("NOT_MATCHED"), overlay = StageStatus("HIDDEN"), shopLabel = "") }
+        health.change { it.copy(screen = StageStatus("SHOP_UNRECOGNIZED"), matching = StageStatus("NOT_MATCHED"), overlay = StageStatus("HIDDEN"), overlays = emptyMap(), shopLabel = "") }
     }
     private fun deactivate(reason: String) {
         invalidate(reason); targetActive = false; activeWindow = -1
@@ -181,12 +182,19 @@ class BaeminAccessibilityService : AccessibilityService() {
         val trace = log.trace(); val token = gate.generation
         val now = SystemClock.uptimeMillis(); val deadline = scheduler.deadline(now)
         log.event("scheduler", "ANALYSIS_SCHEDULED", trace = trace, details = mapOf("token" to token.toString(), "waitMs" to delayMs.toString(), "maxDeadline" to deadline.toString()))
+        val wait = if (delayMs >= ScrollBadgeState.SCROLL_SETTLE_MS) delayMs else
+            maxOf(minOf(delayMs, (deadline - now).coerceAtLeast(0)), if (delayMs == 85L) (lastAnalysisStarted + 250 - now).coerceAtLeast(0) else 0)
         analysis = scope.launch(start = CoroutineStart.LAZY) {
-            delay(if (delayMs >= ScrollBadgeState.SCROLL_SETTLE_MS) delayMs else minOf(delayMs, (deadline - now).coerceAtLeast(0)))
-            scheduler.started()
+            delay(wait)
+            scheduler.started(); contentDirty = false; lastAnalysisStarted = SystemClock.uptimeMillis()
             try { analyze(token, trace) }
             catch (e: CancellationException) { log.event("analysis", "ANALYSIS_CANCELLED", reason = "GENERATION_OR_LIFECYCLE_CHANGED", trace = trace); throw e }
             catch (e: Exception) { failure("analysis", "ACCESSIBILITY_EXCEPTION", e, trace) }
+            finally {
+                if (contentDirty && token == gate.generation && targetActive && connected) {
+                    analysis = null; schedule(85)
+                }
+            }
         }
         analysis?.start()
     }
@@ -207,7 +215,7 @@ class BaeminAccessibilityService : AccessibilityService() {
             val snapshot = detector.snapshot(root)
             val report = withContext(Dispatchers.Default) { detector.analyze(snapshot, records.map { it.shop }) }
             currentCoroutineContext().ensureActive()
-            if (!gate.mayShow(token, SystemClock.uptimeMillis()) || !validRoot(snapshot.windowId)) { log.event("analysis", "SKIPPED", reason = "STALE_WINDOW", trace = trace); return }
+            if (!gate.mayShow(token, SystemClock.uptimeMillis()) || !validRoot(snapshot.windowId) || !publicationValid(snapshot, report.screen)) { log.event("analysis", "SKIPPED", reason = "STALE_WINDOW", trace = trace); return }
             log.event("analysis", "ANALYSIS_COMPLETED", report.screen != ShopScreen.Unknown, report.reason, trace,
                 report.metrics + ("screen" to report.screen.javaClass.simpleName), SystemClock.elapsedRealtime() - start)
             if (report.screen == ShopScreen.Unknown) { log.snapshot(snapshot, trace, report.reason, TARGET_PACKAGE); unrecognized(report.reason, trace); return }
@@ -244,6 +252,22 @@ class BaeminAccessibilityService : AccessibilityService() {
             showStatus()
         } finally { root.recycle() }
     }
+    @Suppress("DEPRECATION") private suspend fun publicationValid(snapshot: NodeSnapshot, screen: ShopScreen): Boolean {
+        val targets = when (screen) {
+            is ShopScreen.Detail -> listOf(screen.shop)
+            is ShopScreen.Listing -> screen.shops
+            ShopScreen.Unknown -> return true
+        }
+        val root = rootInActiveWindow ?: return false
+        try {
+            if (root.windowId != snapshot.windowId || root.packageName?.toString() != TARGET_PACKAGE) return false
+            val fresh = detector.snapshot(root)
+            return targets.all { shop ->
+                val title = snapshot.nodes.firstOrNull { it.bounds == shop.titleBounds && it.text.isNotBlank() } ?: return@all false
+                fresh.nodes.any { it.visible && it.text == title.text && it.bounds == title.bounds }
+            }
+        } finally { root.recycle() }
+    }
     private fun match(identity: ShopIdentity, trace: String): Shop? {
         val report = ShopMatcher.explain(identity, records.map { it.shop })
         log.event("matching", "MATCH_RESULT", report.shop != null, report.reason, trace, mapOf("hasName" to identity.name.isNotBlank().toString(),
@@ -266,11 +290,11 @@ class BaeminAccessibilityService : AccessibilityService() {
         if (b.token != gate.generation || binding?.shop?.identity != b.shop.identity || !validRoot(b.window)) return invalid(b)
         val root = rootInActiveWindow ?: return invalid(b)
         val fresh = try { detector.analyze(detector.snapshot(root), records.map { it.shop }).screen } finally { root.recycle() }
-        val valid = fresh is ShopScreen.Detail && fresh.shop.identity == b.shop.identity && b.token == gate.generation && validRoot(b.window)
+        val valid = ActionTarget(b.shop.identity, b.window, b.token).accepts((fresh as? ShopScreen.Detail)?.shop?.identity, activeWindow, gate.generation) && validRoot(b.window)
         log.event("quick_action", "TARGET_VALIDATED", valid, if (valid) "" else "STALE_ACTION_TARGET", b.trace)
         if (!valid) { invalid(b); return false }; return true
     }
-    private fun invalid(b: Binding): Boolean { log.event("quick_action", "TARGET_REJECTED", false, "STALE_ACTION_TARGET", b.trace); binding = null; detail.hide("STALE_ACTION_TARGET"); toast("화면이 바뀌었어요. 가게를 다시 확인하고 있어요."); analysis = null; schedule(0); showStatus(); return false }
+    private fun invalid(b: Binding): Boolean { log.event("quick_action", "TARGET_REJECTED", false, "STALE_ACTION_TARGET", b.trace); binding = null; detail.hide("STALE_ACTION_TARGET"); toast("화면이 바뀌었어요. 가게를 다시 확인하고 있어요."); cancelAnalysis("STALE_ACTION_TARGET"); schedule(0); showStatus(); return false }
     private fun quickStatus(b: Binding) {
         if (saving) return
         saving = true
@@ -306,19 +330,25 @@ class BaeminAccessibilityService : AccessibilityService() {
             catch (e: Exception) { if (e is CancellationException) throw e; failure("storage", "UNDO_ERROR", e); toast("실행취소하지 못했어요.") }
         } } }
         actions += ServiceStatusOverlayController.Action("현재 인식 상태 · 진단 기록") { openApp("diagnostics") }
-        val description = (if (b != null) state.shopLabel else "가게 정보 인식 안 됨") +
+        val description = (if (b != null) state.shopLabel else if (state.screen.value == "SCREEN_RECOGNIZED") "${state.shopLabel} · 상세화면에서 기록할 수 있어요" else "가게 정보 인식 안 됨") +
             (if (state.error.isNotBlank()) "\n${state.error}" else "\n${state.screen.value}")
         status.show(if (state.error.isNotBlank()) "확인" else if (b != null) "인식" else "대기", description, prefs.minimized, viewport,
             b?.trace ?: state.screen.trace, actions) { app.settings.update(prefs.copy(minimized = !prefs.minimized)) }
     }
-    private fun overlayResult(ok: Boolean, reason: String) { val now = System.currentTimeMillis()
-        health.change { it.copy(overlay = StageStatus(if (ok) "OVERLAY_VISIBLE" else "OVERLAY_FAILED", trace = binding?.trace.orEmpty()),
-            lastOverlay = if (ok) now else it.lastOverlay, lastHealthy = if (ok) now else it.lastHealthy,
-            error = if (!ok) reason else it.error) }
+    private fun overlayResult(kind: String, ok: Boolean, reason: String) {
+        val now = System.currentTimeMillis(); val hidden = reason == "HIDDEN"
+        health.change { previous ->
+            val stages = previous.overlays + (kind to StageStatus(if (hidden) "HIDDEN" else if (ok) "OVERLAY_VISIBLE" else "OVERLAY_FAILED", trace = binding?.trace.orEmpty()))
+            val failed = stages.values.any { it.value == "OVERLAY_FAILED" }
+            previous.copy(overlays = stages, overlay = StageStatus(if (failed) "OVERLAY_FAILED" else if (stages.values.any { it.value == "OVERLAY_VISIBLE" }) "OVERLAY_VISIBLE" else "HIDDEN"),
+                lastOverlay = if (ok && !hidden) now else previous.lastOverlay, lastHealthy = if (ok && !hidden && !failed) now else previous.lastHealthy,
+                error = if (!ok) "$kind:$reason" else if (!failed && previous.error.startsWith("$kind:")) "" else previous.error)
+        }
     }
     private fun failure(stage: String, reason: String, error: Throwable, trace: String = log.sessionId) {
         log.event(stage, "EXCEPTION", false, reason, trace, error = error)
         health.change { it.copy(error = reason) }
+        binding = null
         if (::badges.isInitialized) { badges.hide(reason, trace); detail.hide(reason) }
         if (targetActive && ::status.isInitialized && stage != "status_overlay") showStatus()
     }

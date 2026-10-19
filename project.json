@@ -18,7 +18,7 @@
   "automation": {
     "push_checks": "lightweight",
     "android_debug": "main_source_push_and_manual",
-    "android_apk": "manual_release_only",
+    "android_apk": "manual_or_explicit_release_commit",
     "external_skills": "selective"
   }
 }

@@ -29,7 +29,7 @@ class DetailOverlayController(private val context: Context, private val logger: 
             (occluded + detected.occupiedBounds).none { Rect.intersects(it, area) } }
         logger.event("detail_overlay", "POSITION_RESULT", position != null, if (position == null) "NO_SAFE_SPACE" else "", trace,
             mapOf("candidates" to candidates.size.toString(), "selected" to position?.toShortString().orEmpty()))
-        if (position == null) return
+        if (position == null) { onResult(false, "NO_SAFE_SPACE"); return }
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             background = GradientDrawable().apply { setColor(if (blocked) Color.rgb(255,235,237) else Color.rgb(247,244,239)); cornerRadius = dp(10).toFloat() }
@@ -51,6 +51,7 @@ class DetailOverlayController(private val context: Context, private val logger: 
     fun hide(reason: String = "HIDDEN") {
         current?.let { if (it.isAttachedToWindow) try { wm.removeViewImmediate(it); logger.event("detail_overlay", "REMOVED", reason = reason) }
             catch (e: RuntimeException) { logger.event("detail_overlay", "REMOVE_FAILED", false, "WINDOW_MANAGER_EXCEPTION", error = e) } }
+        if (current != null) onResult(true, "HIDDEN")
         current = null; key = ""
     }
 }

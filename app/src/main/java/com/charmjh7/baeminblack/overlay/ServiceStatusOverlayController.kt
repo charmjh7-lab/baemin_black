@@ -32,8 +32,9 @@ class ServiceStatusOverlayController(private val context: Context, private val l
             background = GradientDrawable().apply { setColor(Color.rgb(247,244,239)); cornerRadius = dp(10).toFloat(); setStroke(dp(1), Color.DKGRAY) }
         }.also { root = it }
         layout.removeAllViews()
+        var container = layout
         fun text(value: String, action: (() -> Unit)? = null, enabled: Boolean = true) {
-            layout.addView(TextView(context).apply {
+            container.addView(TextView(context).apply {
                 text = value; textSize = 12f; setTextColor(if (enabled) Color.rgb(35,34,38) else Color.GRAY)
                 setPadding(dp(10), dp(8), dp(10), dp(8)); minHeight = dp(44); gravity = Gravity.CENTER_VERTICAL
                 isEnabled = enabled; contentDescription = value
@@ -44,6 +45,10 @@ class ServiceStatusOverlayController(private val context: Context, private val l
             expanded = !expanded; signature = ""; latestRender?.invoke()
         })
         if (expanded) {
+            val menu = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+            val scroll = ScrollView(context).apply { addView(menu) }
+            layout.addView(scroll, LinearLayout.LayoutParams(-1, minOf(dp(320), (viewport.height() * .55).toInt()).coerceAtLeast(dp(44))))
+            container = menu
             text(description.take(180))
             actions.forEach { text(it.label, it.run, it.enabled) }
             text(if (minimized) "기본 크기" else "최소화", { expanded = false; minimize() })
@@ -66,6 +71,7 @@ class ServiceStatusOverlayController(private val context: Context, private val l
     fun hide(reason: String) {
         root?.let { if (it.isAttachedToWindow) try { wm.removeViewImmediate(it); logger.event("status_overlay", "REMOVED", reason = reason) }
             catch (e: RuntimeException) { logger.event("status_overlay", "REMOVE_FAILED", false, "WINDOW_MANAGER_EXCEPTION", error = e) } }
+        if (root != null) onResult(true, "HIDDEN")
         root = null; signature = ""; expanded = false; latestRender = null
     }
 }

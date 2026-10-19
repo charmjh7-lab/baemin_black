@@ -19,6 +19,7 @@ class BadgeOverlayController(private val context: Context, private val logger: c
                 mapOf("candidates" to placement.candidates.toString(), "rejected" to placement.rejected.joinToString(","), "selected" to placement.area?.toShortString().orEmpty()))
             placement.area
         }.distinctBy { it.toShortString() }.take(30)
+        if (positions.isEmpty() && shops.isNotEmpty()) result(false, "NO_SAFE_SPACE")
         if (positions == shown && pool.count { it.isAttachedToWindow } == positions.size) { logger?.event("badge", "MAINTAINED", trace = trace); return }
         hide("POSITIONS_CHANGED", trace)
         positions.forEachIndexed { index, rect ->
@@ -35,9 +36,11 @@ class BadgeOverlayController(private val context: Context, private val logger: c
         shown = positions
     }
     fun hide(reason: String = "HIDDEN", trace: String = "") {
+        val attached = pool.any { it.isAttachedToWindow }
         pool.forEach { if (it.isAttachedToWindow) try { wm.removeViewImmediate(it); logger?.event("badge", "REMOVED", reason = reason, trace = trace) }
             catch (e: RuntimeException) { logger?.event("badge", "REMOVE_FAILED", false, "WINDOW_MANAGER_EXCEPTION", trace, error = e) } }
         shown = emptyList()
+        if (attached) result(true, "HIDDEN")
     }
     fun destroy() { hide(); pool.clear() }
     private class BadgeView(context: Context) : View(context) {

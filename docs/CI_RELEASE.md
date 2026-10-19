@@ -68,3 +68,6 @@ push마다 APK를 빌드하거나 전체 E2E를 돌리지 않는다. Android SDK
 
 현재 사용자 요청에 따라 `Android debug APK`는 main의 앱 소스 변경 push와 수동 실행에서 테스트·빌드·서명 확인·Artifact 업로드를 수행한다. 문서만 변경한 push에서는 경량 검사만 수행한다. 직접 APK는 이 대화에서도 제공하며, 별도 Release 워크플로는 수동으로 유지한다. 최초 APK의 signingConfig 연결과 앱 ID·버전·서명 검증은 Actions에서 통과했다.
 
+
+## 1.1.0 진단 통합 개선의 요청 릴리스
+사용자가 APK 릴리스를 명시 요청한 작업에서는 Android debug 워크플로의 `[release-apk]` 커밋 표식으로 `requested-release` 작업을 실행할 수 있다. 동일 실행의 단위 테스트/빌드/서명 검증이 성공한 artifact만 재사용하며 일반 push는 게시하지 않는다. 기존 수동 `release-apk.yml`도 유지한다.

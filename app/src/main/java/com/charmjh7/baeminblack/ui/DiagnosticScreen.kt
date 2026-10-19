@@ -62,6 +62,7 @@ private fun healthText(state: ServiceHealth, enabled: Boolean): String =
         LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
                 Text(healthText(health, enabled), style = MaterialTheme.typography.bodyMedium)
+                Text(health.overlays.entries.joinToString(" · ") { "${it.key}: ${it.value.value}" }, style = MaterialTheme.typography.bodySmall)
                 Text("배민 감지 ${time(health.lastTarget)}\n가게 인식 성공 ${time(health.lastShop)}\n표시 성공 ${time(health.lastOverlay)}\n최근 실패 ${health.error.ifBlank { "없음" }}", style = MaterialTheme.typography.bodySmall)
                 if (!enabled || health.service.value != "SERVICE_CONNECTED") TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("접근성 설정 열기") }
                 diskError?.let { Text("진단 파일 저장 오류: $it", color = MaterialTheme.colorScheme.error) }

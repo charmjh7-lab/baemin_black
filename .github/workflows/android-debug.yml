@@ -51,3 +51,47 @@ jobs:
             app/build/reports/tests/testDebugUnitTest
             app/schemas
           if-no-files-found: ignore
+  requested-release:
+    # Explicit release request only; reuse the APK that passed this run's tests and signing check.
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release-apk]')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: BaeminBlack-debug-${{ github.sha }}
+          path: verified-apk
+      - name: Publish verified development APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/preflight.py --mode release
+          mkdir -p deliverable
+          cp verified-apk/app-debug.apk deliverable/BaeminBlack-1.1.0.apk
+          cp verified-apk/version-info.json deliverable/version-info.json
+          sha256sum deliverable/*.apk > deliverable/SHA256SUMS.txt
+          PREV=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | head -n 1 || true)
+          if [[ -n "$PREV" ]]; then
+            mkdir -p old
+            if gh release download "$PREV" --pattern 'version-info.json' --dir old; then
+              python3 - <<'PY'
+          import json, runpy
+          verify = runpy.run_path('tools/verify_apk.py')
+          verify['compare_new_to_previous'](json.load(open('deliverable/version-info.json')), json.load(open('old/version-info.json')))
+          PY
+            fi
+          fi
+          SHORT=${GITHUB_SHA:0:7}
+          TAG="dev-1.1.0-$SHORT"
+          cat > deliverable/release-notes.md <<'NOTES'
+          배민 블랙 1.1.0: 접근성 상태 버튼, 가게 인식 개선, 블랙 즉시 등록/안전한 실행취소, 바로 메모 작성, 배지 위치 탐색, 로컬 진단 JSONL·상세 스냅샷·검증된 ZIP 내보내기.
+          기존 Room 스키마, applicationId 및 개발 서명을 유지합니다.
+          GitHub Actions 단위 테스트·디버그 빌드·서명 검증을 통과한 APK입니다. 실제 배민 앱과 삼성 기기의 노드·오버레이 위치·서비스 생명주기는 실기기 확인이 필요합니다.
+          NOTES
+          gh release create "$TAG" deliverable/*.apk deliverable/SHA256SUMS.txt deliverable/version-info.json --target "$GITHUB_SHA" --title "Baemin Black 1.1.0 ($SHORT)" --notes-file deliverable/release-notes.md --prerelease
+          gh release view "$TAG" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"

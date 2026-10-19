@@ -43,6 +43,15 @@ class RepositoryBackupTest {
         assertEquals(0 to 0, manager.restore(Uri.fromFile(backup)))
         repo.deleteShop(s.id); assertFalse(repo.media.file(restored.photos.single()).exists())
     }
+    @Test fun removingOneNotePreservesPhotosReferencedByOtherNotes() = runBlocking {
+        val s = Shop(name = "공유 사진"); repo.saveShop(s)
+        val image = "shared-photo.img"; repo.media.file(image).writeBytes(byteArrayOf(1, 2))
+        val a = Note(shopId = s.id, date = "2026-10-20", body = "첫째", photos = listOf(image))
+        val b = Note(shopId = s.id, date = "2026-10-21", body = "둘째", photos = listOf(image))
+        repo.saveNote(a, emptyList()); repo.saveNote(b, emptyList())
+        repo.deleteNote(a); assertTrue(repo.media.file(image).exists())
+        repo.deleteNote(b); assertFalse(repo.media.file(image).exists())
+    }
     @Test fun failedPhotoAndMaliciousRestorePreserveExistingRecords() = runBlocking {
         val s = Shop(name = "보호"); repo.saveShop(s)
         val n = Note(shopId = s.id, date = "2026-10-20", body = "보존"); repo.saveNote(n, emptyList())

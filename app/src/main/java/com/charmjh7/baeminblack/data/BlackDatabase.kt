@@ -8,6 +8,7 @@ interface ShopDao {
     @Transaction @Query("SELECT * FROM shops ORDER BY updatedAt DESC") fun observe(): Flow<List<ShopWithNotes>>
     @Query("SELECT * FROM shops") suspend fun shops(): List<Shop>
     @Query("SELECT * FROM notes") suspend fun notes(): List<Note>
+    @Query("SELECT photos FROM notes") suspend fun photoPayloads(): List<String>
     @Query("SELECT * FROM shops WHERE id=:id") suspend fun shop(id: String): Shop?
     @Query("SELECT * FROM shops WHERE shopNo=:no LIMIT 1") suspend fun byNumber(no: String): Shop?
     @Query("SELECT * FROM notes WHERE id=:id") suspend fun note(id: String): Note?

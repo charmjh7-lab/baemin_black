@@ -24,6 +24,7 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
     val route = saved.getStateFlow("route", "main")
     val selected = saved.getStateFlow("selected", "")
     val noteId = saved.getStateFlow("note", "")
+    private var queuedIntent: Intent? = null
     var busy by mutableStateOf(false); private set
     var message by mutableStateOf<String?>(null)
     fun field(key: String): String = saved[key] ?: ""
@@ -37,13 +38,17 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
         if (busy) return
         busy = true
         viewModelScope.launch {
-            try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { message = e.message?.takeIf { it.length < 200 } ?: "작업을 완료하지 못했어요. 다시 시도해 주세요." } finally { busy = false }
+            try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { message = e.message?.takeIf { it.length < 200 } ?: "작업을 완료하지 못했어요. 다시 시도해 주세요." } finally {
+                busy = false
+                queuedIntent?.let { next -> queuedIntent = null; handleIntent(next, true) }
+            }
         }
     }
     fun handleIntent(intent: Intent, fresh: Boolean = false) {
         val text = if (intent.action == Intent.ACTION_SEND) intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty() else ""
         val key = if (text.isNotBlank()) "share:$text" else "open:${intent.getStringExtra("shop_id")}:${intent.getStringExtra("shop_name")}:${intent.getStringExtra("shop_branch")}" 
         if (!fresh && field("last_intent") == key) return
+        if (busy) { queuedIntent = Intent(intent); return }
         saved["last_intent"] = key
         if (text.isNotBlank()) work {
             val draft = ShareImportHandler().receive(text)

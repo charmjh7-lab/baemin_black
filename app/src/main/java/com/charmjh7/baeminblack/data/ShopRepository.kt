@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
+import kotlinx.serialization.json.Json
 
 class ShopRepository(val db: BlackDatabase, val media: MediaStore) {
     private val lock = Mutex()
@@ -40,16 +41,22 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore) {
                 db.dao().put(note.copy(photos = note.photos + copied, updatedAt = System.currentTimeMillis()))
                 db.dao().touch(note.shopId, System.currentTimeMillis())
             }
-            media.remove(old?.photos.orEmpty() - note.photos.toSet())
+            removeUnused(old?.photos.orEmpty() - note.photos.toSet())
         } catch (e: Exception) { media.remove(copied); throw e }
     } }
     suspend fun deleteNote(note: Note) = withContext(Dispatchers.IO) { lock.withLock {
         db.withTransaction { db.dao().deleteNote(note.id); db.dao().touch(note.shopId, System.currentTimeMillis()) }
-        media.remove(note.photos)
+        removeUnused(note.photos)
     } }
     suspend fun deleteShop(id: String) = withContext(Dispatchers.IO) { lock.withLock {
         val photos = db.dao().notes().filter { it.shopId == id }.flatMap { it.photos }
-        db.dao().deleteShop(id); media.remove(photos)
+        db.dao().deleteShop(id); removeUnused(photos)
     } }
+    private suspend fun removeUnused(names: Iterable<String>) {
+        // A restored image can be referenced by more than one note. A cleanup failure leaves an
+        // orphan file rather than putting any successfully committed record at risk.
+        val references = runCatching { db.dao().photoPayloads().flatMap { Json.decodeFromString<List<String>>(it) }.toSet() }.getOrNull() ?: return
+        media.remove(names.filter { it !in references })
+    }
     suspend fun <T> exclusive(block: suspend () -> T): T = lock.withLock { block() }
 }

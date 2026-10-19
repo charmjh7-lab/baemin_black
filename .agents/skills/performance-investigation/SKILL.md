@@ -1,12 +1,14 @@
 ---
 name: performance-investigation
-description: 스크롤 이벤트 과부하·배지 렌더링 지연의 측정과 최적화
+description: 실측된 지연, 화면 버벅임, 메모리·배터리, 초기에 흰 화면/렌더 지연.
 ---
 
-# performance-investigation
 
-1. 관측 가능한 버벅임/배지 지연이 있을 때 이벤트 수, 노드 탐색 시간, Room 조회 및 오버레이 갱신 시간을 측정한다.
-2. 스크롤 이벤트마다 전체 노드를 계속 탐색하거나 배지 View를 전부 재생성하지 않는다.
-3. 마지막 스크롤 이벤트 후 180ms 정지 판정 시점에 현재 화면을 확인한다.
-4. 링크/ZIP/Room 처리는 UI 스레드에서 하지 않는다.
-5. 데이터 없이 구조 전체를 재설계하지 않는다.
+# Performance: measure, localize, then change
+- 사용자가 체감한 구체 상황(큰 문서 첫 열기/두 번째 열기, 탭 이동, WebView memory, Compose frame drop)을 **같은 조건에서 계측**.
+- 첫 로드 vs cache hit 분리, cold/warm start 구분, debug/release 성능 특성 구분.
+- 지연 코드 구간(파일 읽기/정규화/토큰화/layout/DB/web renderer)별 시간 기록. 무분별한 캐싱은 근본 병목을 가릴 수 있음.
+- 수정을 병목에 국소 적용, 결과를 baseline과 비교. 기존 문맥/화질/제스처/데이터가 변하지 않았는지 확인.
+- Google official Android Profiler/Compose Performance를 필요할 때 활용. CPU/memory trace는 데이터·개인정보 주의.
+- 최적화로 UX 품질을 희생하지 않기. 프레임 깜빡임과 화면 점프도 측정/관찰 대상.
+

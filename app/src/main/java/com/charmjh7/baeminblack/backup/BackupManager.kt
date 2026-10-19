@@ -45,7 +45,7 @@ object BackupMerge {
             LocalDate.parse(n.date)
             require(n.rating == null || n.rating in 1..5) { "잘못된 만족도예요." }
             val candidate = n.copy(shopId = shopId)
-            val duplicate = notes.any { it.shopId == shopId && it.date == n.date && it.title == n.title && it.menu == n.menu && it.body == n.body && it.rating == n.rating && it.createdAt == n.createdAt }
+            val duplicate = notes.any { it.shopId == shopId && it.date == n.date && it.title == n.title && it.menu == n.menu && it.body == n.body && it.rating == n.rating && it.createdAt == n.createdAt && it.updatedAt == n.updatedAt && it.photos.size == n.photos.size }
             if (!duplicate) notes += candidate.copy(id = if (notes.any { it.id == n.id }) UUID.randomUUID().toString() else n.id)
         }
         return MergePlan(shops, notes)

@@ -70,7 +70,7 @@ private fun openAccessibility(context: Context) { context.startActivity(Intent(S
         when (route) {
             "main" -> MainScreen(vm, rows, enabled, snackbar)
             "settings" -> SettingsScreen(vm, enabled, snackbar)
-            "shop" -> key(selected, vm.field("draft_id")) { ShopEditor(vm, current?.shop, snackbar) }
+            "shop" -> if (selected.isNotBlank() && current == null) MissingScreen(vm, rows == null, snackbar) else key(selected, vm.field("draft_id")) { ShopEditor(vm, current?.shop, snackbar) }
             "note" -> if (current != null) key(selected, noteId) { NoteEditor(vm, current.shop, current.notes.firstOrNull { it.id == noteId }, snackbar) } else MissingScreen(vm, rows == null, snackbar)
             "detail" -> if (current != null) DetailScreen(vm, current, snackbar) else MissingScreen(vm, rows == null, snackbar)
         }

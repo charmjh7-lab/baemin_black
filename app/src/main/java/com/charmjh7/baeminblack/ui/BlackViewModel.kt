@@ -45,13 +45,17 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
         }
     }
     fun handleIntent(intent: Intent, fresh: Boolean = false) {
-        val text = if (intent.action == Intent.ACTION_SEND) intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty() else ""
-        val key = if (text.isNotBlank()) "share:$text" else "open:${intent.getStringExtra("shop_id")}:${intent.getStringExtra("shop_name")}:${intent.getStringExtra("shop_branch")}" 
+        val text = if (intent.action == Intent.ACTION_SEND) intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty() else ""
+        val title = if (intent.action == Intent.ACTION_SEND) {
+            intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT)?.toString().orEmpty()
+                .ifBlank { intent.getCharSequenceExtra(Intent.EXTRA_TITLE)?.toString().orEmpty() }
+        } else ""
+        val key = if (text.isNotBlank()) "share:$text:$title" else "open:${intent.getStringExtra("shop_id")}:${intent.getStringExtra("shop_name")}:${intent.getStringExtra("shop_branch")}"
         if (!fresh && field("last_intent") == key) return
         if (busy) { queuedIntent = Intent(intent); return }
         saved["last_intent"] = key
         if (text.isNotBlank()) work {
-            val draft = ShareImportHandler().receive(text)
+            val draft = ShareImportHandler().receive(text, title)
             val existing = draft.identity.shopNo?.let { repo.byNumber(it) }
             if (existing != null) go("detail", existing.id)
             else newShop(draft.identity.name, draft.identity.branch, draft.identity.shopNo.orEmpty(), draft.url, draft.original)

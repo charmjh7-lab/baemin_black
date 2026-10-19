@@ -23,6 +23,13 @@ class BackupMergeTest {
         assertEquals(2, plan.shops.size); assertEquals(2, plan.notes.size)
         assertEquals(old, plan.notes.first()); assertNotEquals("n", plan.notes.last().id); assertNotEquals("same", plan.notes.last().shopId)
     }
+    @Test fun updatedAttachmentVersionIsNotDroppedAsDuplicate() {
+        val s = Shop(id = "s", name = "사진 가게", shopNo = "77")
+        val n = Note(id = "n", shopId = "s", date = "2026-10-20", body = "같은 본문", updatedAt = 1)
+        val plan = BackupMerge.plan(listOf(s), listOf(n), BackupData(shops = listOf(s), notes = listOf(n.copy(updatedAt = 2, photos = listOf("photo.img")))))
+        assertEquals(2, plan.notes.size)
+        assertNotEquals(plan.notes.first().id, plan.notes.last().id)
+    }
     @Test(expected = IllegalArgumentException::class) fun rejectFutureFormat() { BackupMerge.plan(emptyList(), emptyList(), BackupData(99, emptyList(), emptyList())) }
     @Test(expected = IllegalStateException::class) fun rejectOrphanBeforeCommit() { BackupMerge.plan(emptyList(), emptyList(), BackupData(shops = emptyList(), notes = listOf(Note(shopId = "missing", date = "2026-10-20")))) }
 }

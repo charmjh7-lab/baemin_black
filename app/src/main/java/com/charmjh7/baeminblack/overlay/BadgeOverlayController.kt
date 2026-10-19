@@ -14,7 +14,7 @@ class BadgeOverlayController(private val context: Context) {
             // Place in free card space, never over the name. Fully contained cards only.
             val gap = (4 * context.resources.displayMetrics.density).toInt()
             val area = Rect(s.titleBounds.right + gap, s.titleBounds.top, s.titleBounds.right + gap + size, s.titleBounds.top + size)
-            if (!viewport.contains(s.cardBounds) || !s.cardBounds.contains(area) || occluded.any { Rect.intersects(it, s.cardBounds) }) null else area
+            if (!viewport.contains(s.cardBounds) || !s.cardBounds.contains(area) || occluded.any { Rect.intersects(it, s.cardBounds) } || s.occupiedBounds.any { Rect.intersects(it, area) }) null else area
         }.distinctBy { it.toShortString() }.take(30)
         hide()
         positions.forEachIndexed { index, rect ->

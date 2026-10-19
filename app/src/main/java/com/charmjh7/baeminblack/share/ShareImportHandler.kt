@@ -44,14 +44,16 @@ class ShareImportHandler {
     suspend fun receive(text: String): ShareDraft = withContext(Dispatchers.IO) {
         val parsed = ShareLinkParser.parse(text)
         if (parsed.identity.shopNo != null) return@withContext parsed
+        val urls = ShareLinkParser.urls(text).take(3)
+        if (urls.mapNotNull { ShareLinkParser.number(it) }.distinct().size > 1) return@withContext parsed
+        val deadline = System.nanoTime() + 5_000_000_000L
         val no = withTimeoutOrNull(6500) {
-            ShareLinkParser.urls(text).firstNotNullOfOrNull { resolve(it) }
+            urls.mapNotNull { resolve(it, deadline) }.distinct().singleOrNull()
         }
         parsed.copy(identity = parsed.identity.copy(shopNo = no))
     }
-    private fun resolve(initial: String): String? {
+    private fun resolve(initial: String, deadline: Long): String? {
         var current = initial
-        val deadline = System.nanoTime() + 5_000_000_000L
         repeat(4) {
             if (!ShareLinkParser.allowed(current) || System.nanoTime() >= deadline) return null
             ShareLinkParser.number(current)?.let { return it }

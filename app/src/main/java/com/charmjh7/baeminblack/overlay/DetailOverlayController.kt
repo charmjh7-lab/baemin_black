@@ -25,8 +25,11 @@ class DetailOverlayController(private val context: Context) {
         fun dp(v: Int) = (v * density).toInt()
         val width = minOf(dp(if (warning) 250 else 88), viewport.width() - dp(24)); val height = dp(44)
         if (width < dp(64)) return
-        val position = Rect(viewport.right - width - dp(12), maxOf(viewport.top + dp(56), detected.titleBounds.bottom + dp(8)), viewport.right - dp(12), maxOf(viewport.top + dp(56), detected.titleBounds.bottom + dp(8)) + height)
-        if (!viewport.contains(position) || occluded.any { Rect.intersects(it, position) }) return
+        val startY = maxOf(viewport.top + dp(56), detected.titleBounds.bottom + dp(8))
+        val position = (0..3).map { offset ->
+            val top = startY + offset * dp(48)
+            Rect(viewport.right - width - dp(12), top, viewport.right - dp(12), top + height)
+        }.firstOrNull { area -> viewport.contains(area) && area.bottom < viewport.top + viewport.height() * 0.6 && (occluded + detected.occupiedBounds).none { Rect.intersects(it, area) } } ?: return
         val text = TextView(context).apply {
             text = if (warning) "⛔ 블랙리스트 · 기록 ${record?.notes?.size ?: 0}건" else if (!record?.notes.isNullOrEmpty()) "메모 ●" else "메모 +"
             textSize = 13f; gravity = Gravity.CENTER

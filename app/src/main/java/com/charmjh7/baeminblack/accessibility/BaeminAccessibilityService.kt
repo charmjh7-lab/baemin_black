@@ -16,6 +16,7 @@ import com.charmjh7.baeminblack.matching.ShopMatcher
 import com.charmjh7.baeminblack.overlay.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.catch
 
 class BaeminAccessibilityService : AccessibilityService() {
     companion object { const val TARGET_PACKAGE = "com.sampleapp"; private const val CONTENT_MERGE_MS = 85L }
@@ -23,6 +24,8 @@ class BaeminAccessibilityService : AccessibilityService() {
     private val detector = ShopScreenDetector()
     private val gate = ScrollBadgeState()
     private var analysis: Job? = null
+    private var dataCollection: Job? = null
+    private var receiverRegistered = false
     private lateinit var badges: BadgeOverlayController
     private lateinit var detail: DetailOverlayController
     private var records: List<ShopWithNotes> = emptyList()
@@ -32,12 +35,19 @@ class BaeminAccessibilityService : AccessibilityService() {
         override fun onReceive(context: Context?, intent: Intent?) { clear(); targetActive = false }
     }
     override fun onServiceConnected() {
+        super.onServiceConnected()
+        clear(); dataCollection?.cancel()
+        if (::badges.isInitialized) badges.destroy()
         badges = BadgeOverlayController(this); detail = DetailOverlayController(this)
         val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenReceiver, filter, RECEIVER_NOT_EXPORTED) else registerReceiver(screenReceiver, filter)
+        if (!receiverRegistered) {
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenReceiver, filter, RECEIVER_NOT_EXPORTED) else registerReceiver(screenReceiver, filter)
+            receiverRegistered = true
+        }
         val app = application as BlackApplication
-        scope.launch {
-            combine(app.repository.shops, app.settings.flow) { rows, prefs -> rows to prefs }.collect { (rows, prefs) ->
+        dataCollection = scope.launch {
+            combine(app.repository.shops, app.settings.flow) { rows, prefs -> rows to prefs }
+                .catch { records = emptyList(); clear() }.collect { (rows, prefs) ->
                 records = rows; settings = prefs
                 if (targetActive) { clear(); schedule(0) }
             }
@@ -119,7 +129,7 @@ class BaeminAccessibilityService : AccessibilityService() {
     }
     private fun clear() { analysis?.cancel(); gate.invalidate(); if (::badges.isInitialized) { badges.hide(); detail.hide() } }
     override fun onConfigurationChanged(newConfig: Configuration) { super.onConfigurationChanged(newConfig); clear(); if (targetActive) schedule(CONTENT_MERGE_MS) }
-    override fun onInterrupt() { clear() }
-    override fun onUnbind(intent: Intent?): Boolean { clear(); return super.onUnbind(intent) }
+    override fun onInterrupt() { targetActive = false; clear() }
+    override fun onUnbind(intent: Intent?): Boolean { targetActive = false; clear(); return super.onUnbind(intent) }
     override fun onDestroy() { clear(); scope.cancel(); runCatching { unregisterReceiver(screenReceiver) }; if (::badges.isInitialized) badges.destroy(); super.onDestroy() }
 }

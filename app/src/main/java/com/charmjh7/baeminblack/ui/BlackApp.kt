@@ -21,6 +21,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -64,11 +65,12 @@ private fun openAccessibility(context: Context) { context.startActivity(Intent(S
     val route by vm.route.collectAsStateWithLifecycle(); val selected by vm.selected.collectAsStateWithLifecycle(); val noteId by vm.noteId.collectAsStateWithLifecycle()
     val rows by vm.rows.collectAsStateWithLifecycle(); val enabled = accessibilityEnabled()
     val snackbar = remember { SnackbarHostState() }
+    val screenState = rememberSaveableStateHolder()
     LaunchedEffect(vm.message) { vm.message?.let { snackbar.showSnackbar(it); vm.message = null } }
     val current = rows?.firstOrNull { it.shop.id == selected }
     Box(Modifier.fillMaxSize()) {
         when (route) {
-            "main" -> MainScreen(vm, rows, enabled, snackbar)
+            "main" -> screenState.SaveableStateProvider("main") { MainScreen(vm, rows, enabled, snackbar) }
             "settings" -> SettingsScreen(vm, enabled, snackbar)
             "shop" -> if (selected.isNotBlank() && current == null) MissingScreen(vm, rows == null, snackbar) else key(selected, vm.field("draft_id")) { ShopEditor(vm, current?.shop, snackbar) }
             "note" -> if (current != null) key(selected, noteId) { NoteEditor(vm, current.shop, current.notes.firstOrNull { it.id == noteId }, snackbar) } else MissingScreen(vm, rows == null, snackbar)
@@ -94,7 +96,7 @@ private fun openAccessibility(context: Context) { context.startActivity(Intent(S
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(if (enabled) Icons.Outlined.CheckCircle else Icons.Outlined.Info, null, Modifier.size(22.dp))
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                        Text(if (enabled) "배민 화면에서 표시 중" else "접근성 서비스 꺼짐", style = MaterialTheme.typography.labelLarge)
+                        Text(if (enabled) "접근성 서비스 켜짐" else "접근성 서비스 꺼짐", style = MaterialTheme.typography.labelLarge)
                         if (!enabled) Text("가게 이름과 위치를 읽어 배지를 표시해요. 메모는 권한 없이도 쓸 수 있어요.", style = MaterialTheme.typography.bodySmall)
                     }
                     if (!enabled) TextButton(onClick = { openAccessibility(context) }) { Text("켜기") }

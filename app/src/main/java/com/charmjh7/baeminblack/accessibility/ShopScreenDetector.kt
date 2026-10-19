@@ -11,7 +11,7 @@ import kotlinx.coroutines.ensureActive
 
 data class ScreenNode(val index: Int, val parent: Int, val text: String, val resourceId: String, val bounds: Rect, val clickable: Boolean, val heading: Boolean, val visible: Boolean)
 data class NodeSnapshot(val nodes: List<ScreenNode>, val viewport: Rect, val windowId: Int, val truncated: Boolean = false)
-data class DetectedShop(val identity: ShopIdentity, val titleBounds: Rect, val cardBounds: Rect)
+data class DetectedShop(val identity: ShopIdentity, val titleBounds: Rect, val cardBounds: Rect, val occupiedBounds: List<Rect> = emptyList())
 sealed interface ShopScreen {
     data class Listing(val shops: List<DetectedShop>) : ShopScreen
     data class Detail(val shop: DetectedShop) : ShopScreen
@@ -75,7 +75,11 @@ class ShopScreenDetector {
                     parent = p.parent
                 }
             }
-            chosen?.let { DetectedShop(identity(name, descendants(it)), name.bounds, it.bounds) }
+            chosen?.let { card ->
+                val region = descendants(card)
+                val occupied = region.filter { it.index != card.index && it.index != name.index && (it.text.isNotBlank() || it.clickable) }.map { it.bounds }
+                DetectedShop(identity(name, region), name.bounds, card.bounds, occupied)
+            }
         }.distinctBy { it.cardBounds.toShortString() }
         if (cards.isNotEmpty()) return ShopScreen.Listing(cards)
         val detailMarkers = visible.count { it.text.trim() in setOf("메뉴", "리뷰", "가게정보", "가게 정보", "정보", "원산지", "주문하기") }
@@ -83,7 +87,7 @@ class ShopScreenDetector {
             .distinctBy { ShopMatcher.normalize(it.text) }
         if (detailMarkers >= 2 && detailNames.size == 1) {
             val n = detailNames.single()
-            return ShopScreen.Detail(DetectedShop(identity(n, visible), n.bounds, n.bounds))
+            return ShopScreen.Detail(DetectedShop(identity(n, visible), n.bounds, n.bounds, visible.filter { it.index != n.index && (it.text.isNotBlank() || it.clickable) && it.bounds.width() < snapshot.viewport.width() * 0.9 }.map { it.bounds }))
         }
         return ShopScreen.Unknown
     }

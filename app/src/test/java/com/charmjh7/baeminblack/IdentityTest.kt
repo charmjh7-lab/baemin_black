@@ -20,6 +20,10 @@ class IdentityTest {
         assertNull(ShareLinkParser.parse("https://www.baemin.com/?shopNo=1 https://www.baemin.com/?shopNo=2").identity.shopNo)
         assertEquals("이름과 링크 원문", ShareLinkParser.parse("이름과 링크 원문").original)
     }
+    @Test fun spacesPreserveDifferentNames() {
+        assertEquals("my 치킨", ShopMatcher.normalize("  MY ·   치킨 "))
+        assertNotEquals(ShopMatcher.normalize("가나 다"), ShopMatcher.normalize("가 나다"))
+    }
     @Test fun exactNameBranchAndAliasesOnly() {
         val a = Shop(name = "MY 치킨", branch = "강남점", aliases = listOf("내치킨 강남"), shopNo = "10")
         val b = Shop(name = "MY 치킨", branch = "서초점", shopNo = "20")

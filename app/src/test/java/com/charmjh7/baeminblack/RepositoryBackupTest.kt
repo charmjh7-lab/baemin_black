@@ -46,11 +46,12 @@ class RepositoryBackupTest {
     @Test fun failedPhotoAndMaliciousRestorePreserveExistingRecords() = runBlocking {
         val s = Shop(name = "보호"); repo.saveShop(s)
         val n = Note(shopId = s.id, date = "2026-10-20", body = "보존"); repo.saveNote(n, emptyList())
+        val beforeFailure = db.dao().notes().single()
         assertTrue(runCatching { repo.saveNote(n.copy(body = "손실 금지"), listOf(Uri.parse("content://missing/image"))) }.isFailure)
         assertEquals("보존", db.dao().notes().single().body)
         val bad = File(context.cacheDir, "bad.zip")
         ZipOutputStream(bad.outputStream()).use { it.putNextEntry(ZipEntry("photos/../../escape.img")); it.write(byteArrayOf(1)); it.closeEntry() }
         assertTrue(runCatching { BackupManager(context, repo).restore(Uri.fromFile(bad)) }.isFailure)
-        assertEquals(s.id, db.dao().shops().single().id); assertEquals(n, db.dao().notes().single())
+        assertEquals(s.id, db.dao().shops().single().id); assertEquals(beforeFailure, db.dao().notes().single())
     }
 }

@@ -14,6 +14,7 @@ import com.charmjh7.baeminblack.BlackApplication
 import com.charmjh7.baeminblack.data.*
 import com.charmjh7.baeminblack.matching.ShopMatcher
 import com.charmjh7.baeminblack.overlay.*
+import com.charmjh7.baeminblack.share.RecentBaeminDetail
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.catch
@@ -32,7 +33,7 @@ class BaeminAccessibilityService : AccessibilityService() {
     private var settings = OverlaySettings()
     private var targetActive = false
     private val screenReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) { clear(); targetActive = false }
+        override fun onReceive(context: Context?, intent: Intent?) { clear(); RecentBaeminDetail.clear(); targetActive = false }
     }
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -77,7 +78,7 @@ class BaeminAccessibilityService : AccessibilityService() {
         targetActive = true
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                analysis?.cancel(); gate.scroll(SystemClock.uptimeMillis()); badges.hide(); detail.hide(); schedule(ScrollBadgeState.SCROLL_SETTLE_MS)
+                RecentBaeminDetail.clear(); analysis?.cancel(); gate.scroll(SystemClock.uptimeMillis()); badges.hide(); detail.hide(); schedule(ScrollBadgeState.SCROLL_SETTLE_MS)
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED -> { clear(); schedule(CONTENT_MERGE_MS) }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
@@ -111,25 +112,25 @@ class BaeminAccessibilityService : AccessibilityService() {
                     .map { w -> Rect().also(w::getBoundsInScreen) }
                 when (result) {
                     is ShopScreen.Listing -> {
-                        detail.hide()
+                        RecentBaeminDetail.clear(); detail.hide()
                         val matches = if (settings.badges) result.shops.filter { ShopMatcher.match(it.identity, rows.map { r -> r.shop })?.status == ShopStatus.BLOCKED } else emptyList()
                         badges.update(matches, snapshot.viewport, blockers)
                     }
                     is ShopScreen.Detail -> {
-                        badges.hide()
+                        RecentBaeminDetail.remember(result.shop.identity); badges.hide()
                         val match = ShopMatcher.match(result.shop.identity, rows.map { it.shop })
                         // Ambiguous existing names do not expose any record or a misleading create shortcut.
                         val ambiguous = match == null && rows.count { ShopMatcher.normalize(it.shop.name) == ShopMatcher.normalize(result.shop.identity.name) } > 0
                         if (ambiguous) detail.hide() else detail.show(result.shop, rows.firstOrNull { it.shop.id == match?.id }, settings, snapshot.viewport, blockers)
                     }
-                    ShopScreen.Unknown -> { badges.hide(); detail.hide() }
+                    ShopScreen.Unknown -> { RecentBaeminDetail.clear(); badges.hide(); detail.hide() }
                 }
             } catch (e: CancellationException) { throw e } catch (_: Exception) { badges.hide(); detail.hide() } finally { root.recycle() }
         }
     }
     private fun clear() { analysis?.cancel(); gate.invalidate(); if (::badges.isInitialized) { badges.hide(); detail.hide() } }
     override fun onConfigurationChanged(newConfig: Configuration) { super.onConfigurationChanged(newConfig); clear(); if (targetActive) schedule(CONTENT_MERGE_MS) }
-    override fun onInterrupt() { targetActive = false; clear() }
-    override fun onUnbind(intent: Intent?): Boolean { targetActive = false; clear(); return super.onUnbind(intent) }
-    override fun onDestroy() { clear(); scope.cancel(); runCatching { unregisterReceiver(screenReceiver) }; if (::badges.isInitialized) badges.destroy(); super.onDestroy() }
+    override fun onInterrupt() { targetActive = false; clear(); RecentBaeminDetail.clear() }
+    override fun onUnbind(intent: Intent?): Boolean { targetActive = false; clear(); RecentBaeminDetail.clear(); return super.onUnbind(intent) }
+    override fun onDestroy() { clear(); RecentBaeminDetail.clear(); scope.cancel(); runCatching { unregisterReceiver(screenReceiver) }; if (::badges.isInitialized) badges.destroy(); super.onDestroy() }
 }

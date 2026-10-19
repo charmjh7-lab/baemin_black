@@ -58,6 +58,8 @@
 
 **우선순위:** 현재 사용자 요청 > 확정된 제품 계약과 데이터 호환성 > 기존 소스/검증 결과 > 이 파일 > 범용 스킬.
 
+배달의민족 원본 바이너리는 저장소에 올리지 않는다. 정적 분석에서 확인한 개발 단서와 실제 기기에서 추가 검증할 항목은 [docs/BAEMIN_INTEGRATION.md](docs/BAEMIN_INTEGRATION.md)를 참고한다. 이 문서는 구현 재조사나 원본 APK 요청을 지시하지 않는다.
+
 ## 범위
 - Android 독립형 앱, Kotlin + Jetpack Compose + Room.
 - Android `AccessibilityService`와 `TYPE_ACCESSIBILITY_OVERLAY`를 사용한다.

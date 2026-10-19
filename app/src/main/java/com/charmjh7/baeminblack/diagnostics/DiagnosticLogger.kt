@@ -40,13 +40,17 @@ class DiagnosticLogger(context: Context, private val maxBytes: Long = 10L * 1024
     val detailedUntil = MutableStateFlow(0L)
     @Volatile private var textConsent = false
     private var timeout: Job? = null
+    private var flushJob: Job? = null
     private var lastSnapshot = 0L
     private data class Repeated(val first: DiagnosticEvent, var last: DiagnosticEvent, var count: Int)
     private val repeats = linkedMapOf<String, Repeated>()
     val storageError = MutableStateFlow<String?>(null)
-    init { scope.launch { prune(); refreshNow(); for (task in queue) {
-        try { task() } catch (e: Exception) { storageError.value = e.javaClass.simpleName }
-    } }; scope.launch { while (isActive) { delay(1000); queue.send { flushRepeats() } } } }
+    init { scope.launch {
+        try { prune(); refreshNow() } catch (e: Exception) { storageError.value = e.javaClass.simpleName }
+        for (task in queue) {
+            try { task() } catch (e: Exception) { storageError.value = e.javaClass.simpleName }
+        }
+    } }
     fun trace(): String = UUID.randomUUID().toString()
     fun event(stage: String, status: String, success: Boolean = true, reason: String = "", trace: String = sessionId,
               details: Map<String, String> = emptyMap(), duration: Long = 0, error: Throwable? = null, kind: String = stage) {
@@ -57,6 +61,7 @@ class DiagnosticLogger(context: Context, private val maxBytes: Long = 10L * 1024
             val lost = dropped.getAndSet(0)
             if (lost > 0) append(DiagnosticEvent(sessionId = sessionId, traceId = trace, kind = "AGGREGATE", stage = "logging",
                 status = "EVENTS_COALESCED", success = true, details = mapOf("count" to lost.toString())))
+            if (flushJob?.isActive != true) flushJob = scope.launch { delay(1000); queue.send { flushRepeats(); flushJob = null } }
             val key = "${item.stage}|${item.status}|${item.reason}|${item.traceId}|${item.details}"
             val previous = repeats[key]
             if (previous != null && item.elapsedRealtime - previous.first.elapsedRealtime < 1000) {
@@ -128,6 +133,7 @@ class DiagnosticLogger(context: Context, private val maxBytes: Long = 10L * 1024
     suspend fun snapshotText(name: String): String = serialized {
         require(name == File(name).name); File(directory, "snapshots/$name").readText()
     }
+    suspend fun traceEvents(id: String): List<DiagnosticEvent> = serialized { flushRepeats(); readEvents().filter { it.traceId == id }.sortedBy { it.elapsedRealtime } }
     internal fun eventsForExport(): List<DiagnosticEvent> { flushRepeats(); return readEvents() }
 }
 @Serializable private data class SnapshotNode(val index: Int, val parent: Int, val resourceId: String, val hasText: Boolean,

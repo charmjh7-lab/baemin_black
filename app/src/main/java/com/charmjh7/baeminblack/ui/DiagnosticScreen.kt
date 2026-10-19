@@ -52,6 +52,8 @@ private fun healthText(state: ServiceHealth, enabled: Boolean): String =
     var includeSnapshots by rememberSaveable { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     var trace by remember { mutableStateOf<String?>(null) }
+    var traceEvents by remember { mutableStateOf<List<com.charmjh7.baeminblack.diagnostics.DiagnosticEvent>>(emptyList()) }
+    LaunchedEffect(trace) { traceEvents = emptyList(); trace?.let { traceEvents = vm.traceEvents(it) } }
     var snapshotPreview by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> uri?.let { vm.exportDiagnostics(it, includeSnapshots) } }
@@ -97,7 +99,7 @@ private fun healthText(state: ServiceHealth, enabled: Boolean): String =
     trace?.let { id -> AlertDialog(onDismissRequest = { trace = null }, title = { Text("처리 흐름") }, text = {
         Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
             Text(id, style = MaterialTheme.typography.labelSmall)
-            data.events.filter { it.traceId == id }.sortedBy { it.elapsedRealtime }.forEach { event ->
+            traceEvents.forEach { event ->
                 Text("${event.time}\n${event.stage} · ${event.status}\n${event.reason}\n${event.details}\n${event.stack}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp))
             }
         }

@@ -110,6 +110,13 @@ class BaeminAccessibilityService : AccessibilityService() {
     private fun handleEvent(event: AccessibilityEvent) {
         if (!usable()) { deactivate("SCREEN_LOCKED"); return }
         val pkg = event.packageName?.toString()
+        val eventWindow = windows.firstOrNull { it.id == event.windowId }
+        if (OverlayEventPolicy.isOverlay(eventWindow?.type)) return
+        if (pkg == packageName && event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val active = rootInActiveWindow
+            try { if (active?.packageName?.toString() == TARGET_PACKAGE) return }
+            finally { @Suppress("DEPRECATION") active?.recycle() }
+        }
         if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             val changed = windows.firstOrNull { it.id == event.windowId }
             if (changed?.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY || pkg == this.packageName) {

@@ -39,6 +39,11 @@ class OverlayPolicyTest {
         assertEquals(250L,scheduler.deadline(1000))
         scheduler.started(); assertEquals(1085L,scheduler.deadline(1000))
     }
+    @Test fun ownWindowEventsDoNotInvalidateTheUnderlyingScreen() {
+        assertTrue(OverlayEventPolicy.isOverlay(android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY))
+        assertFalse(OverlayEventPolicy.isOverlay(android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION))
+        assertFalse(OverlayEventPolicy.isOverlay(null))
+    }
     @Test fun staleButtonCannotTargetAnotherShopOrWindow() {
         val shop = ShopIdentity("치킨", "강남점", "1")
         val target = ActionTarget(shop, 4, 10)

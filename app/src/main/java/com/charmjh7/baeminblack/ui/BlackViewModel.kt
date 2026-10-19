@@ -30,6 +30,7 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
     fun stopDetailed() { diagnostics.stopDetailed() }
     fun clearDiagnostics() = work { diagnostics.clear() }
     fun deleteSnapshots() = work { diagnostics.deleteSnapshots() }
+    suspend fun traceEvents(id: String) = diagnostics.traceEvents(id)
     suspend fun readSnapshot(name: String) = diagnostics.snapshotText(name)
     fun exportDiagnostics(uri: Uri, snapshots: Boolean) = work("diagnostic_export") {
         com.charmjh7.baeminblack.diagnostics.DiagnosticExporter(app, diagnostics).export(uri, snapshots)

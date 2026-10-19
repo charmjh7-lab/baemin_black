@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "name": "배민 블랙",
+  "platform": "android",
+  "status": "not_initialized",
+  "android": {
+    "module": "app",
+    "application_id": "com.charmjh7.baeminblack",
+    "min_sdk": 26,
+    "target_sdk": 36,
+    "development_signing": "pending_repo_dev",
+    "gradle_task": ":app:assembleDebug",
+    "language": "kotlin",
+    "ui": "jetpack_compose"
+  },
+  "automation": {
+    "push_checks": "lightweight",
+    "android_debug": "push_and_manual_when_source_ready",
+    "android_apk": "manual_release_only",
+    "external_skills": "selective"
+  }
+}

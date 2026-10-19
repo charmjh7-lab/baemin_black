@@ -1,0 +1,9 @@
+* text=auto
+*.md text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.kt text eol=lf
+gradlew text eol=lf
+*.p12 binary
+*.apk binary
+*.zip binary

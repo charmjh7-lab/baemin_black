@@ -1,0 +1,28 @@
+# Android / IDE
+.gradle/
+.idea/
+.vscode/
+**/build/
+local.properties
+*.iml
+.cxx/
+.externalNativeBuild/
+captures/
+*.hprof
+*.log
+# Local environment
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.pytest_cache/
+# Never commit production keys or local credentials
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+# Repo-specific DEVELOPMENT signing (only after explicit setup)
+!signing/dev-only.p12
+!signing/dev-signing.properties

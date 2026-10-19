@@ -56,7 +56,7 @@ push마다 APK를 빌드하거나 전체 E2E를 돌리지 않는다. Android SDK
 
 
 - `ci.yml`: push/PR/수동에서 경량 preflight + Python 단위 테스트.
-- `android-debug.yml`: main push/수동에서 Android 프로젝트가 실제 존재할 때만 `:app:assembleDebug` 실행, APK를 Actions Artifact로 업로드. 파일이 없으면 준비 단계로 기록하고 성공 종료.
+- `android-debug.yml`: 수동 실행 시 Android 프로젝트가 실제 존재할 때만 `:app:assembleDebug` 실행, APK를 Actions Artifact로 업로드. 파일이 없으면 준비 단계로 기록하고 성공 종료.
 - `release-apk.yml`: 수동 실행에서만 빌드·검증 후 GitHub **Prerelease에 직접 APK 파일** 업로드. 원본 프로젝트와 서명 설정이 완성되기 전에는 명확히 중단.
 - Java 17 / Android SDK / Gradle 캐시. 기존 Gradle Wrapper 사용.
 - 고정 개발 키: 새 앱 최초 구현 시 `tools/bootstrap.py --apply --project android --signing repo-dev`로 저장소 전용 dev-only 키를 생성하고 Gradle `signingConfig`에 연결. 기존 생성 키는 절대 변경 금지.

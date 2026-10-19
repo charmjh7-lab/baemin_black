@@ -8,6 +8,7 @@
 - 내부 JSONL 순환 로그: 7일/10MB, bounded 비동기 writer, 반복·유실 집계, trace 연결, 민감 원문 제외. 상세 진단은 배민 화면에 한해 5분, 원문은 명시 선택만 허용.
 - 진단 화면: 단계별 상태·최근 시각·실패·보관 집계·trace·스냅샷 확인/삭제. ZIP은 manifest/events/summary/errors와 선택한 snapshots를 포함하고 실제 문서를 다시 열어 검사.
 - 로컬 preflight 및 Python 11개 테스트 통과. 로컬 Android 실행은 Gradle 배포 호스트 연결 실패로 불가.
-- 구현 커밋 `2507189`의 Android 40개 테스트 및 `2d49715`의 추가 보강 테스트·assembleDebug·기존 개발 인증서 검증 통과. 최종 오버레이 자체 이벤트/로그 writer 복구 보강은 후속 릴리스 실행에서 검증한다.
+- 최종 APK 코드 커밋 `9f80785b6564d78981b73544e55b0a1bd13a83be`: GitHub Actions 실행 `39303451636`에서 Android 43개 테스트(실패/건너뜀 0), assembleDebug, versionCode 4, 기존 개발 인증서 검증 및 Releases 게시 통과. Python 11개 테스트와 preflight도 통과.
+- APK: https://github.com/charmjh7-lab/baemin_black/releases/download/dev-1.1.0-9f80785/BaeminBlack-1.1.0.apk
 - 요청 APK는 Android debug 워크플로의 명시적 `[release-apk]` 커밋에 한해, 검증한 APK를 재빌드 없이 Releases에 게시한다. 기존 수동 릴리스 경로도 유지.
 - 실기기 미검증: 실제 배민 트리 노출/인식 정확도, 삼성 기기의 오버레이 위치·창 이벤트·잠금/권한 해제/재연결, 문서 제공자별 ZIP 쓰기/재열기, 장시간 배터리/체감 성능. 가상 노드·Robolectric 성공을 실기기 성공으로 간주하지 않는다.

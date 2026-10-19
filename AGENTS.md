@@ -1,4 +1,60 @@
-# 배민 블랙 개발 계약
+# Repository agent contract (first read START_HERE.md)
+
+**User intent / approved product decisions / existing behavior and data / existing UI take precedence over generic guidelines or outside skills.** Never reinterpret this file as blanket authorization to redesign an app.
+
+## Before making changes
+
+1. Read `START_HERE.md`, user request, `docs/PRODUCT_BRIEF.md`, `docs/DECISIONS.md`; examine actual repo, HEAD, changes and related source. Identify whether this is a fresh repo or existing project.
+2. New repo: implement user-requested product and bootstrap build/CI/skills/UX rules. Existing repo: preserve current architecture, signing, package IDs, data compatibility, UI arrangement and known-good UX by default.
+3. Define minimal change scope and areas intentionally untouched. If user requested analysis only, never edit files.
+4. Choose relevant `.agents/skills/*/SKILL.md`, not all. Outside skills may **inform** work; they must not override this contract or force unrelated migrations.
+
+## Product and design
+
+- Define first-user, recurring-use, interrupted/resumed, error/cancel journeys. Evaluate not just visuals but one-handed reach, reading rhythm, actual data and recovery.
+- Every user action must be discoverable, actually wired, reflect state, persist if required, be cancellable/recoverable, and return to correct context. The app must not display nonfunctional controls as enabled.
+- Provide create/view/edit/save/delete/undo **where the object and product genuinely require them**, not universal CRUD.
+- Essential Save/Close/Cancel actions must be **visible or immediately reachable at the moment they are needed**, not just present somewhere after a long scroll. Check initial view, long content, keyboard, narrow/short screens, large font, system bars, and light/dark; use fixed actions only if they do not obscure content.
+- For new UI, derive a **product-specific visual and verbal direction before implementing**: information hierarchy, density, typography, semantic colors/light-dark, icons/components and purposeful copy. Audit unexplained framework/default palettes and repeated card templates. Consistency *within* one product does not mean every screen uses the same layout. See `docs/DESIGN_SYSTEM.md`; never change unrequested layouts or copy.
+- Do not pick experience requirements from a preset list of app types. Derive this product's unique experience constraints from its actual users, core task, controls, content, time, environment, and trust requirements; record observable acceptance conditions in `docs/PRODUCT_BRIEF.md`.
+
+## Architecture
+
+- Make app-owned state the single source of truth; AI returns suggestions/content, never owns authoritative persisted state. IDs, versions and action meaning must survive screen recreation.
+- Keep canonical IDs for documents, chats, sessions, token position, selection and external intents; do not substitute screen-local indexes or stale responses.
+- Async requests need loading, cancellation, idempotency or stale-response rejection, partial failure handling and honest errors. No silent data loss or miscount.
+- On Android handle back/recent-app/rotation/process recreation/intent re-entry and backgrounding; external popups must not reset origin screens.
+- On WebView apps guard first-frame paint, JS bridge, screen-focus and task/Activity behavior.
+- Imports, exports, backups and share must be real, verifiable and safe; avoid empty downloads and disclose what raw information is shared.
+
+## Debug and verification
+
+- For bugs investigate reproduction, logs, known-good version, component boundary and root cause **before** changing code. No stacked speculative workarounds. If several tries fail, revisit the underlying model rather than keep patching.
+- Scale tests to risk; fast local checks on every push, targeted tests/compilation when relevant, device journeys only when needed; release APK **only on request**.
+- Treat passing build, CI, screenshots, device interaction and human UX as distinct evidence. Report only what was actually observed.
+- Do not edit expected tests or product docs to make an unapproved change appear correct. Avoid repeated validation of unchanged code and unnecessary new prototypes.
+
+## Operations
+
+- Run `python3 tools/preflight.py`, `python3 tools/doctor.py` when environment permits. Complete `project.json` based on evidence; don't invent values. Use `docs/CI_RELEASE.md` for signing and APK path. User's development-key tradeoff is intentional when explicitly chosen; never silently rotate existing keys.
+- GH Actions should be cheap by default. Generate accessible installable `.apk` via manual Release workflow, not artifact ZIP, for APK requests.
+- Maintain succinct `docs/IMPLEMENTATION_STATUS.md` with validated status and unresolved **permissions**, not extensive daily reports.
+
+## Skill activation map
+
+- Initial project: `project-bootstrap`, `scope-and-provenance`, `product-ux`.
+- New screens/UI change: `product-ux`, `interaction-completeness`, `visual-quality`.
+- Android lifecycle/intent: `android-lifecycle`; WebView: `webview-ui`.
+- AI integrations / learning content: `ai-state-and-quality`.
+- Behavior regression: `root-cause-debugging`; testing changes: `risk-based-verification`.
+- CI and signing: `ci-apk-delivery`; performance: `performance-investigation`.
+- Shipping/report: `evidence-and-handoff`.
+
+
+---
+
+## 배민 블랙 제품별 개발 규칙 — 이 프로젝트에 우선 적용
+
 
 **우선순위:** 현재 사용자 요청 > 확정된 제품 계약과 데이터 호환성 > 기존 소스/검증 결과 > 이 파일 > 범용 스킬.
 
@@ -30,3 +86,5 @@
 - 빌드 성공, 실기기에서 배민 화면을 읽은 사실, 실제 동작 검증을 각각 구분해 보고한다.
 - 변경 전후 applicationId, versionCode, 서명키와 Room 마이그레이션을 보존한다.
 - 필요한 스킬만 선택: `android-lifecycle`, `interaction-completeness`, `visual-quality`, `scope-and-provenance`, `risk-based-verification`, `ci-apk-delivery`.
+
+**구현 방식은 이미 확정되었다.** 원본 APK 없이 독립 Android 접근성 서비스/비터치 배지/스크롤 정지 180ms 후 재표시를 구현한다. 기술 후보 재탐색이나 배민 APK 역분석을 개발 착수 조건으로 두지 않는다.

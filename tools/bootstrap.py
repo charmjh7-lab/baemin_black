@@ -32,7 +32,7 @@ def bootstrap(root, apply=False, signing="preserve"):
             print("Existing non-template signing material detected; preserving configuration")
             cfg["android"]["development_signing"] = "preserve"
             cfg["status"] = "source_detected"
-            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2)+"\\n")
+            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2)+"\n")
             return
     key, props = base / "dev-only.p12", base / "dev-signing.properties"
     if key.exists() != props.exists():

@@ -15,7 +15,7 @@
   },
   "automation": {
     "push_checks": "lightweight",
-    "android_debug": "push_and_manual_when_source_ready",
+    "android_debug": "manual_when_source_ready",
     "android_apk": "manual_release_only",
     "external_skills": "selective"
   }

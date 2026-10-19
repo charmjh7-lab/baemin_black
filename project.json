@@ -12,8 +12,8 @@
     "gradle_task": ":app:assembleDebug",
     "language": "kotlin",
     "ui": "jetpack_compose",
-    "version_code": 4,
-    "version_name": "1.1.0"
+    "version_code": 5,
+    "version_name": "1.1.1"
   },
   "automation": {
     "push_checks": "lightweight",

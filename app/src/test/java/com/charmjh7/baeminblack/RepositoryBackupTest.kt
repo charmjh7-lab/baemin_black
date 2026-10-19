@@ -63,4 +63,12 @@ class RepositoryBackupTest {
         assertTrue(runCatching { BackupManager(context, repo).restore(Uri.fromFile(bad)) }.isFailure)
         assertEquals(s.id, db.dao().shops().single().id); assertEquals(beforeFailure, db.dao().notes().single())
     }
+    @Test fun canonicalShareLookupReusesExistingShopAndRejectsOtherBranch() = runBlocking {
+        val shop = Shop(name = "교촌 치킨", branch = "강남점", status = ShopStatus.BLOCKED)
+        repo.saveShop(shop)
+        assertEquals(shop.id, repo.find(com.charmjh7.baeminblack.matching.ShopIdentity("교촌치킨 · 강남점"))?.id)
+        assertNull(repo.find(com.charmjh7.baeminblack.matching.ShopIdentity("교촌치킨", "서초점")))
+        assertEquals(1, db.dao().shops().size)
+    }
+
 }

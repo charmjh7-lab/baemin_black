@@ -13,8 +13,8 @@ android {
         applicationId = "com.charmjh7.baeminblack"
         minSdk = 26
         targetSdk = 37
-        versionCode = 4
-        versionName = "1.1.0"
+        versionCode = 5
+        versionName = "1.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     val dev = Properties().apply { load(rootProject.file("signing/dev-signing.properties").inputStream()) }

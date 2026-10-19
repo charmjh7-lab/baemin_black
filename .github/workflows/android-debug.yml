@@ -72,7 +72,7 @@ jobs:
           set -euo pipefail
           python3 tools/preflight.py --mode release
           mkdir -p deliverable
-          cp verified-apk/app-debug.apk deliverable/BaeminBlack-1.1.0.apk
+          cp verified-apk/app-debug.apk deliverable/BaeminBlack-1.1.1.apk
           cp verified-apk/version-info.json deliverable/version-info.json
           sha256sum deliverable/*.apk > deliverable/SHA256SUMS.txt
           PREV=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | head -n 1 || true)
@@ -87,11 +87,11 @@ jobs:
             fi
           fi
           SHORT=${GITHUB_SHA:0:7}
-          TAG="dev-1.1.0-$SHORT"
+          TAG="dev-1.1.1-$SHORT"
           cat > deliverable/release-notes.md <<'NOTES'
-          배민 블랙 1.1.0: 접근성 상태 버튼, 가게 인식 개선, 블랙 즉시 등록/안전한 실행취소, 바로 메모 작성, 배지 위치 탐색, 로컬 진단 JSONL·상세 스냅샷·검증된 ZIP 내보내기.
+          배민 블랙 1.1.1: 실제 전면 앱 기준 오버레이 제거, attach 이전 중복 등록 방지, 구조 기반 상세 인식, 공유 정보 보존과 자동입력, 일관된 가게/지점 매칭, 예외 메시지·공유 trace 진단 보완.
           기존 Room 스키마, applicationId 및 개발 서명을 유지합니다.
           GitHub Actions 단위 테스트·디버그 빌드·서명 검증을 통과한 APK입니다. 실제 배민 앱과 삼성 기기의 노드·오버레이 위치·서비스 생명주기는 실기기 확인이 필요합니다.
           NOTES
-          gh release create "$TAG" deliverable/*.apk deliverable/SHA256SUMS.txt deliverable/version-info.json --target "$GITHUB_SHA" --title "Baemin Black 1.1.0 ($SHORT)" --notes-file deliverable/release-notes.md --prerelease
+          gh release create "$TAG" deliverable/*.apk deliverable/SHA256SUMS.txt deliverable/version-info.json --target "$GITHUB_SHA" --title "Baemin Black 1.1.1 ($SHORT)" --notes-file deliverable/release-notes.md --prerelease
           gh release view "$TAG" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"

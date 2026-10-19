@@ -13,11 +13,15 @@ import kotlinx.serialization.json.Json
 class ShopRepository(val db: BlackDatabase, val media: MediaStore, private val logger: com.charmjh7.baeminblack.diagnostics.DiagnosticLogger? = null) {
     private val lock = Mutex()
     val shops = db.dao().observe()
+    suspend fun find(identity: com.charmjh7.baeminblack.matching.ShopIdentity): Shop? = withContext(Dispatchers.IO) {
+        ShopMatcher.match(identity, db.dao().shops())
+    }
     suspend fun byNumber(no: String): Shop? = withContext(Dispatchers.IO) { db.dao().byNumber(no) }
-    suspend fun saveShop(shop: Shop, firstMemo: String = ""): String = withContext(Dispatchers.IO) { lock.withLock {
+    suspend fun saveShop(shop: Shop, firstMemo: String = "", trace: String = logger?.trace().orEmpty()): String = withContext(Dispatchers.IO) { lock.withLock {
         require(ShopMatcher.normalize(shop.name).isNotEmpty()) { "가게명을 입력해 주세요." }
         require(shop.shopNo == null || shop.shopNo.matches(Regex("[0-9]{1,30}"))) { "가게 고유번호는 숫자로 입력해 주세요." }
-        db.withTransaction {
+        logger?.event("storage", "SHOP_TRANSACTION_STARTED", trace = trace)
+        try { db.withTransaction {
             val existing = shop.shopNo?.let { db.dao().byNumber(it) }
             require(existing == null || existing.id == shop.id) { "같은 가게 고유번호가 이미 등록되어 있어요. 기존 가게를 수정해 주세요." }
             db.dao().put(shop.copy(name = shop.name.trim(), branch = shop.branch.trim(), aliases = shop.aliases.filter { it.isNotBlank() }.distinct(), updatedAt = System.currentTimeMillis()))
@@ -25,8 +29,10 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore, private val l
                 db.dao().put(Note(shopId = shop.id, date = LocalDate.now().toString(), body = firstMemo))
                 db.dao().touch(shop.id, System.currentTimeMillis())
             }
+            logger?.event("storage", "SHOP_TRANSACTION_PREPARED", trace = trace, details = mapOf("hasNumber" to (shop.shopNo != null).toString()))
             shop.id
-        }
+        }.also { logger?.event("storage", "SHOP_TRANSACTION_COMMITTED", trace = trace) }
+        } catch (e: Exception) { logger?.event("storage", "SHOP_TRANSACTION_FAILED", false, "ROOM_SAVE_ERROR", trace, error = e); throw e }
     } }
     suspend fun saveNote(note: Note, newPhotos: List<Uri>, draft: Shop? = null, trace: String = logger?.trace().orEmpty()): String = withContext(Dispatchers.IO) { lock.withLock {
         LocalDate.parse(note.date)
@@ -54,7 +60,7 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore, private val l
     private suspend fun resolve(identity: com.charmjh7.baeminblack.matching.ShopIdentity): Shop? {
         val all = db.dao().shops()
         val match = ShopMatcher.match(identity, all)
-        require(match != null || all.none { ShopMatcher.normalize(it.name) == ShopMatcher.normalize(identity.name) &&
+        require(match != null || all.none { ShopMatcher.sameBase(com.charmjh7.baeminblack.matching.ShopIdentity(it.name, it.branch), identity) &&
             (identity.branch.isBlank() || it.branch.isBlank() || ShopMatcher.normalize(it.branch) == ShopMatcher.normalize(identity.branch)) }) { "같은 상호의 기록을 확인한 뒤 직접 등록해 주세요." }
         return match
     }

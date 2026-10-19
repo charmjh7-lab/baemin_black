@@ -100,7 +100,7 @@ private fun healthText(state: ServiceHealth, enabled: Boolean): String =
         Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
             Text(id, style = MaterialTheme.typography.labelSmall)
             traceEvents.forEach { event ->
-                Text("${event.time}\n${event.stage} · ${event.status}\n${event.reason}\n${event.details}\n${event.stack}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp))
+                Text("${event.time}\n${event.stage} · ${event.status}\n${event.reason}\n${event.details}\n${event.exceptionClass}: ${event.exceptionMessage}\n${event.causeClass}: ${event.causeMessage}\n${event.stack}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp))
             }
         }
     }, confirmButton = { TextButton(onClick = { trace = null }) { Text("닫기") } }) }

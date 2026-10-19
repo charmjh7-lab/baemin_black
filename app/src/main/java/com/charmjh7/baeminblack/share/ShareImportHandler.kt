@@ -1,6 +1,9 @@
 package com.charmjh7.baeminblack.share
 
 import com.charmjh7.baeminblack.matching.ShopIdentity
+import com.charmjh7.baeminblack.matching.ShopMatcher
+import com.charmjh7.baeminblack.diagnostics.DiagnosticLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -9,7 +12,29 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLDecoder
 
-data class ShareDraft(val identity: ShopIdentity, val url: String, val original: String)
+data class ShareDraft(val identity: ShopIdentity, val url: String, val original: String,
+    val sources: Map<String, String> = emptyMap(), val conflicts: List<String> = emptyList())
+data class IdentityEvidence(val identity: ShopIdentity, val source: String)
+object ShareIdentityMerger {
+    fun merge(evidence: List<IdentityEvidence>): Pair<ShopIdentity, List<String>> {
+        val primary = evidence.firstOrNull { it.identity.name.isNotBlank() } ?: evidence.firstOrNull()
+            ?: return ShopIdentity("") to emptyList()
+        val chosen = ShopMatcher.canonical(primary.identity)
+        val conflicts = mutableListOf<String>()
+        val compatible = evidence.filter { item ->
+            val sameId = chosen.shopNo != null && chosen.shopNo == item.identity.shopNo
+            val fits = sameId || ShopMatcher.compatible(chosen, item.identity)
+            if (!fits) conflicts += if (chosen.shopNo != null && item.identity.shopNo != null && chosen.shopNo != item.identity.shopNo) "SHOP_ID_CONFLICT" else "SHOP_NAME_OR_BRANCH_CONFLICT"
+            fits
+        }
+        val numbers = evidence.mapNotNull { it.identity.shopNo }.distinct()
+        if (numbers.size > 1) conflicts += "SHOP_ID_CONFLICT"
+        // Never attach an unrelated URL's number/branch to the name selected from another source.
+        val number = if (numbers.size > 1) null else if (conflicts.isEmpty()) numbers.singleOrNull() else chosen.shopNo
+        val branch = chosen.branch.ifBlank { if (conflicts.isEmpty()) compatible.map { ShopMatcher.canonical(it.identity).branch }.filter(String::isNotBlank).distinctBy(ShopMatcher::key).singleOrNull().orEmpty() else "" }
+        return chosen.copy(branch = branch, shopNo = number) to conflicts.distinct()
+    }
+}
 
 object ShareLinkParser {
     private val hosts = setOf("baemin.com", "www.baemin.com", "baemin.go.link", "baemin.me", "www.baemin.me")
@@ -32,6 +57,7 @@ object ShareLinkParser {
         .map { it.value.trimEnd('.', ',', ')', '!', '\'', '>', ']', '。') }
         .filter(::allowed).distinct().toList()
 
+    fun parameterNames(url: String): List<String> = params(url).map { it.first.take(60) }.distinct().take(30)
     private fun params(url: String): List<Pair<String, String>> {
         if (!allowed(url)) return emptyList()
         val rawQuery = runCatching { URI(url).rawQuery }.getOrNull() ?: return emptyList()
@@ -75,6 +101,7 @@ object ShareLinkParser {
 
     private fun candidate(raw: String): String? {
         var name = unescape(raw).replace(Regex("""\s+"""), " ").trim()
+        name = name.replace(Regex("""^\[(?:배달의민족|배민)\]\s*[-:|·]?\s*"""), "")
         name = name.replace(Regex("""^(?:\[배달의민족\]|\[배민\]|배달의민족|배민)\s*[-:|·]\s*"""), "")
             .replace(Regex("""\s*[-|·]\s*(?:배달의민족|배민)$"""), "")
             .trim().trim('"', '\'', '“', '”', '‘', '’', '[', ']')
@@ -92,11 +119,12 @@ object ShareLinkParser {
         lines.firstNotNullOfOrNull { shareSentence.matchEntire(it)?.groupValues?.get(1)?.let(::candidate) }
             ?.let { return it }
         // A single non-boilerplate line accompanying a URL is commonly the shared shop title.
-        if (urls(text).isNotEmpty() && lines.size == 1) {
-            val line = lines.single().trim()
-            if (!Regex("""[.!?]|(?:확인|공유|추천|주문|열어|보세요|할인|배민에서|배달의민족에서)""").containsMatchIn(line)) {
-                return candidate(line)
-            }
+        if (urls(text).isNotEmpty()) {
+            val candidates = lines.mapNotNull { line ->
+                if (Regex("""[.!?]|(?:확인|공유|추천|주문하|주문해|열어|보세요|할인|배민에서|배달의민족에서)""").containsMatchIn(line)) null
+                else candidate(line)
+            }.distinctBy(ShopMatcher::key)
+            return candidates.singleOrNull()
         }
         return null
     }
@@ -129,41 +157,53 @@ object ShareLinkParser {
         return titleTag.find(html)?.groupValues?.get(1)?.let { candidate(it.replace(Regex("""<[^>]+>"""), "")) }
     }
 
-    fun identity(name: String, shopNo: String?): ShopIdentity {
-        val match = Regex("""^(.+?)\s+([^\s]+점)$""").matchEntire(name)
-        return if (match != null) ShopIdentity(match.groupValues[1], match.groupValues[2], shopNo)
-        else ShopIdentity(name, shopNo = shopNo)
-    }
+    fun identity(name: String, shopNo: String?): ShopIdentity = ShopMatcher.canonical(ShopIdentity(name, shopNo = shopNo))
 
-    fun parse(text: String, title: String = ""): ShareDraft {
-        val links = urls(text)
-        val shopNo = links.mapNotNull(::number).distinct().singleOrNull()
-        val name = nameFromText(text) ?: links.mapNotNull(::nameFromUrl).distinct().singleOrNull()
-            ?: nameFromText(title) ?: candidate(title).takeIf { title.isNotBlank() }
-        return ShareDraft(identity(name.orEmpty(), shopNo), links.firstOrNull().orEmpty(), text)
+    fun parse(text: String, title: String = "", extraTitle: String = ""): ShareDraft {
+        val links = (urls(text) + urls(title) + urls(extraTitle)).distinct()
+        val evidence = mutableListOf<IdentityEvidence>()
+        nameFromText(text)?.let { evidence += IdentityEvidence(identity(it, null), "SHARE_TEXT") }
+        links.forEach { url -> evidence += IdentityEvidence(identity(nameFromUrl(url).orEmpty(), number(url)), "URL_PARAMETERS") }
+        for ((value, source) in listOf(title to "EXTRA_SUBJECT", extraTitle to "EXTRA_TITLE")) {
+            (nameFromText(value) ?: candidate(urlPattern.replace(value, "")).takeIf { value.isNotBlank() })?.let {
+                evidence += IdentityEvidence(identity(it, null), source)
+            }
+        }
+        val (merged, conflicts) = ShareIdentityMerger.merge(evidence)
+        val nameSource = evidence.firstOrNull { it.identity.name.isNotBlank() && ShopMatcher.compatible(merged, it.identity) }?.source.orEmpty()
+        val noSource = evidence.firstOrNull { it.identity.shopNo != null && it.identity.shopNo == merged.shopNo }?.source.orEmpty()
+        return ShareDraft(merged, links.firstOrNull().orEmpty(), text, mapOf("name" to nameSource, "shopNo" to noSource), conflicts)
     }
 }
 
 class ShareImportHandler {
-    suspend fun receive(text: String, title: String = ""): ShareDraft = withContext(Dispatchers.IO) {
-        val parsed = ShareLinkParser.parse(text, title)
-        val links = ShareLinkParser.urls(text).take(3)
-        if (links.isEmpty() || (parsed.identity.name.isNotBlank() && parsed.identity.shopNo != null)) {
+    suspend fun receive(text: String, title: String = "", extraTitle: String = "", logger: DiagnosticLogger? = null,
+        trace: String = "", resolvePublicLinks: Boolean = true): ShareDraft = withContext(Dispatchers.IO) {
+        val parsed = ShareLinkParser.parse(text, title, extraTitle)
+        val links = (ShareLinkParser.urls(text) + ShareLinkParser.urls(title) + ShareLinkParser.urls(extraTitle)).distinct().take(3)
+        logger?.event("share", "SHARE_PAYLOAD_PARSED", trace = trace, details = mapOf("textPresent" to text.isNotBlank().toString(),
+            "textLength" to text.length.toString(), "subjectPresent" to title.isNotBlank().toString(), "titlePresent" to extraTitle.isNotBlank().toString(),
+            "urlCount" to links.size.toString(), "conflicts" to parsed.conflicts.joinToString(",")))
+        logger?.sensitive("share_payload", trace, mapOf("text" to text.take(2000), "subject" to title.take(200), "title" to extraTitle.take(200)))
+        links.forEach { url -> logger?.event("share", "SHARE_URL_FOUND", trace = trace, details = mapOf("host" to URI(url).host.orEmpty(), "parameterNames" to ShareLinkParser.parameterNames(url).joinToString(","))) }
+        if (links.isEmpty() || !resolvePublicLinks || (parsed.identity.name.isNotBlank() && parsed.identity.shopNo != null) || parsed.conflicts.isNotEmpty()) {
+            logger?.event("share", "SHARE_URL_RESOLVED", parsed.conflicts.isEmpty(),
+                if (links.isEmpty()) "NO_ALLOWED_URL" else if (parsed.conflicts.isNotEmpty()) "PAYLOAD_CONFLICT" else "NETWORK_NOT_REQUIRED", trace,
+                mapOf("networkAttempted" to "false"))
             return@withContext parsed
         }
         val deadline = System.nanoTime() + 5_000_000_000L
-        val resolved = withTimeoutOrNull(6500) { links.map { inspect(it, deadline) } }
-            ?: emptyList()
-        val numbers = (links.mapNotNull(ShareLinkParser::number) + resolved.mapNotNull { it.first })
-            .distinct()
-        val number = if (numbers.size == 1) numbers.single() else null
-        val titleName = resolved.mapNotNull { it.second }.distinct().singleOrNull()
-        val originalName = parsed.identity.name.ifBlank { titleName.orEmpty() }
-        parsed.copy(identity = ShareLinkParser.identity(originalName, number))
+        val resolved = withTimeoutOrNull(6500) { links.map { inspect(it, deadline, logger, trace) } } ?: emptyList()
+        if (resolved.isEmpty() && links.isNotEmpty()) logger?.event("share", "SHARE_URL_RESOLVED", false, "RESOLUTION_TIMEOUT_OR_EMPTY", trace)
+        val evidence = listOf(IdentityEvidence(parsed.identity, "PARSED_PAYLOAD")) + resolved.map { IdentityEvidence(ShopMatcher.canonical(ShopIdentity(it.second.orEmpty(), shopNo = it.first)), "PUBLIC_LINK_PREVIEW") }
+        val (merged, conflicts) = ShareIdentityMerger.merge(evidence)
+        parsed.copy(identity = merged, conflicts = parsed.conflicts + conflicts, sources = parsed.sources + mapOf(
+            "name" to if (parsed.identity.name.isNotBlank()) parsed.sources["name"].orEmpty() else if (merged.name.isNotBlank()) "PUBLIC_LINK_PREVIEW" else "",
+            "shopNo" to if (parsed.identity.shopNo != null) parsed.sources["shopNo"].orEmpty() else if (merged.shopNo != null) "PUBLIC_LINK_PREVIEW" else ""))
     }
 
     /** Fetch only public, HTTPS, allowlisted Baemin pages. Never forward a shared URL to another host. */
-    private fun inspect(initial: String, deadline: Long): Pair<String?, String?> {
+    private fun inspect(initial: String, deadline: Long, logger: DiagnosticLogger?, trace: String): Pair<String?, String?> {
         var current = initial
         var shopNo: String? = ShareLinkParser.number(current)
         repeat(4) {
@@ -180,13 +220,23 @@ class ShareImportHandler {
                 }
             }.getOrNull() ?: return shopNo to null
             try {
-                when (connection.responseCode) {
+                val code = connection.responseCode
+                logger?.event("share", "SHARE_URL_RESOLVED", code in 200..399, if (code in 200..399) "" else "HTTP_STATUS", trace,
+                    mapOf("host" to URI(current).host.orEmpty(), "statusCode" to code.toString(), "redirectStep" to it.toString()))
+                when (code) {
                     301, 302, 303, 307, 308 -> {
                         val location = connection.getHeaderField("Location") ?: return shopNo to null
                         val next = URI(current).resolve(location).toString()
-                        if (!ShareLinkParser.allowed(next)) return shopNo to null
+                        if (!ShareLinkParser.allowed(next)) {
+                            logger?.event("share", "SHARE_URL_RESOLVED", false, "REDIRECT_HOST_REJECTED", trace)
+                            return shopNo to null
+                        }
                         val fromNext = ShareLinkParser.number(next)
-                        if (fromNext != null && (shopNo == null || shopNo == fromNext)) shopNo = fromNext
+                        if (fromNext != null && shopNo != null && shopNo != fromNext) {
+                            logger?.event("share", "SHARE_URL_RESOLVED", false, "REDIRECT_SHOP_ID_CONFLICT", trace)
+                            return null to null
+                        }
+                        if (fromNext != null) shopNo = fromNext
                         current = next
                     }
                     200 -> {
@@ -205,7 +255,9 @@ class ShareImportHandler {
                     }
                     else -> return shopNo to null
                 }
-            } catch (_: Exception) {
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                logger?.event("share", "SHARE_URL_RESOLVED", false, "LINK_RESOLUTION_EXCEPTION", trace, details = mapOf("host" to URI(current).host.orEmpty()), error = e)
                 return shopNo to null
             } finally {
                 connection.disconnect()

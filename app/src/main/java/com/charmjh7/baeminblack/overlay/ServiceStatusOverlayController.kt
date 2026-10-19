@@ -11,9 +11,10 @@ import com.charmjh7.baeminblack.diagnostics.DiagnosticLogger
 
 /** Owns only the status window. Listing badges and detail controls have independent lifetimes. */
 class ServiceStatusOverlayController(private val context: Context, private val logger: DiagnosticLogger,
+    metadata: () -> Map<String, String> = { emptyMap() },
     private val onResult: (Boolean, String) -> Unit) {
     data class Action(val label: String, val enabled: Boolean = true, val run: () -> Unit)
-    private val wm = context.getSystemService(WindowManager::class.java)
+    private val host = OverlayWindowHost(context, "status_overlay", logger, metadata, onResult)
     private var root: LinearLayout? = null
     private var expanded = false
     private var signature = ""
@@ -26,7 +27,7 @@ class ServiceStatusOverlayController(private val context: Context, private val l
     }
     private fun render(label: String, description: String, minimized: Boolean, viewport: Rect, trace: String, actions: List<Action>, minimize: () -> Unit) {
         val key = "$label|$description|$minimized|$expanded|$viewport|$trace|${actions.map { it.label to it.enabled }}"
-        if (key == signature && root?.isAttachedToWindow == true) return
+        if (key == signature && host.registered) return
         val layout = root ?: LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply { setColor(Color.rgb(247,244,239)); cornerRadius = dp(10).toFloat(); setStroke(dp(1), Color.DKGRAY) }
@@ -60,18 +61,11 @@ class ServiceStatusOverlayController(private val context: Context, private val l
             gravity = Gravity.TOP or Gravity.LEFT; x = viewport.right - width - dp(6)
             y = viewport.top + dp(60); title = "배민 블랙 작동 상태"
         }
-        try {
-            if (layout.isAttachedToWindow) { wm.updateViewLayout(layout, params); logger.event("status_overlay", "UPDATED", trace = trace) }
-            else { logger.event("status_overlay", "ADD_VIEW_CALLED", trace = trace); wm.addView(layout, params); logger.event("status_overlay", "ADD_VIEW_SUCCESS", trace = trace) }
-            signature = key; onResult(true, "")
-        } catch (e: RuntimeException) {
-            logger.event("status_overlay", "ADD_VIEW_FAILED", false, "WINDOW_MANAGER_EXCEPTION", trace, error = e); onResult(false, "WINDOW_MANAGER_EXCEPTION")
-        }
+        if (host.present(layout, params, trace)) signature = key
     }
-    fun hide(reason: String) {
-        root?.let { if (it.isAttachedToWindow) try { wm.removeViewImmediate(it); logger.event("status_overlay", "REMOVED", reason = reason) }
-            catch (e: RuntimeException) { logger.event("status_overlay", "REMOVE_FAILED", false, "WINDOW_MANAGER_EXCEPTION", error = e) } }
-        if (root != null) onResult(true, "HIDDEN")
+
+    fun hide(reason: String, trace: String = "") {
+        if (!(if (trace.isBlank()) host.hide(reason) else host.hide(reason, trace))) return
         root = null; signature = ""; expanded = false; latestRender = null
     }
 }

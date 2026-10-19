@@ -6,8 +6,9 @@ import android.view.*
 import com.charmjh7.baeminblack.accessibility.DetectedShop
 
 class BadgeOverlayController(private val context: Context, private val logger: com.charmjh7.baeminblack.diagnostics.DiagnosticLogger? = null,
+    private val metadata: () -> Map<String, String> = { emptyMap() },
     private val result: (Boolean, String) -> Unit = { _, _ -> }) {
-    private val wm = context.getSystemService(WindowManager::class.java)
+    private val hosts = mutableListOf<OverlayWindowHost>()
     private val pool = mutableListOf<BadgeView>()
     private val size = (22 * context.resources.displayMetrics.density).toInt()
     private var shown = emptyList<Rect>()
@@ -20,29 +21,23 @@ class BadgeOverlayController(private val context: Context, private val logger: c
             placement.area
         }.distinctBy { it.toShortString() }.take(30)
         if (positions.isEmpty() && shops.isNotEmpty()) result(false, "NO_SAFE_SPACE")
-        if (positions == shown && pool.count { it.isAttachedToWindow } == positions.size) { logger?.event("badge", "MAINTAINED", trace = trace); return }
-        hide("POSITIONS_CHANGED", trace)
+        if (positions == shown && hosts.count { it.registered } == positions.size) { logger?.event("badge", "MAINTAINED", trace = trace); return }
         positions.forEachIndexed { index, rect ->
             val view = pool.getOrNull(index) ?: BadgeView(context).also(pool::add)
             val params = WindowManager.LayoutParams(size, size, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT).apply {
                 gravity = Gravity.TOP or Gravity.LEFT; x = rect.left; y = rect.top; title = "배민 블랙 목록 배지"
             }
-            try {
-                logger?.event("badge", "ADD_VIEW_CALLED", trace = trace); wm.addView(view, params)
-                logger?.event("badge", "ADD_VIEW_SUCCESS", trace = trace); result(true, "")
-            } catch (e: RuntimeException) { logger?.event("badge", "ADD_VIEW_FAILED", false, "WINDOW_MANAGER_EXCEPTION", trace, error = e); result(false, "WINDOW_MANAGER_EXCEPTION") }
+            val host = hosts.getOrNull(index) ?: OverlayWindowHost(context, "badge", logger, metadata, result).also(hosts::add)
+            host.present(view, params, trace)
         }
+        hosts.drop(positions.size).forEach { it.hide("NO_LONGER_VISIBLE", trace) }
         shown = positions
     }
     fun hide(reason: String = "HIDDEN", trace: String = "") {
-        val attached = pool.any { it.isAttachedToWindow }
-        pool.forEach { if (it.isAttachedToWindow) try { wm.removeViewImmediate(it); logger?.event("badge", "REMOVED", reason = reason, trace = trace) }
-            catch (e: RuntimeException) { logger?.event("badge", "REMOVE_FAILED", false, "WINDOW_MANAGER_EXCEPTION", trace, error = e) } }
-        shown = emptyList()
-        if (attached) result(true, "HIDDEN")
+        hosts.forEach { it.hide(reason, trace) }; shown = emptyList()
     }
-    fun destroy() { hide(); pool.clear() }
+    fun destroy() { hide(); pool.clear(); hosts.clear() }
     private class BadgeView(context: Context) : View(context) {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO; isClickable = false }

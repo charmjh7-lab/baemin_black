@@ -19,7 +19,8 @@ import java.util.concurrent.atomic.AtomicLong
     val time: String = ZonedDateTime.now().toString(), val elapsedRealtime: Long = SystemClock.elapsedRealtime(),
     val eventId: String = UUID.randomUUID().toString(), val sessionId: String, val traceId: String,
     val kind: String, val stage: String, val status: String, val success: Boolean,
-    val reason: String = "", val durationMs: Long = 0, val details: Map<String, String> = emptyMap(), val stack: String = ""
+    val reason: String = "", val durationMs: Long = 0, val details: Map<String, String> = emptyMap(), val stack: String = "", val exceptionClass: String = "", val exceptionMessage: String = "",
+    val causeClass: String = "", val causeMessage: String = "", val parentTraceId: String = ""
 )
 internal fun DiagnosticEvent.occurrences(): Int = if (kind == "AGGREGATE") (details["repeatCount"] ?: details["count"])?.toIntOrNull() ?: 1 else 1
 internal fun List<DiagnosticEvent>.stageCounts() = groupBy { "${it.stage}/${it.status}/${it.success}" }.mapValues { (_, events) -> events.sumOf { it.occurrences() } }
@@ -42,6 +43,7 @@ class DiagnosticLogger(context: Context, private val maxBytes: Long = 10L * 1024
     private var timeout: Job? = null
     private var flushJob: Job? = null
     private var lastSnapshot = 0L
+    private val sensitiveTimes = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private data class Repeated(val first: DiagnosticEvent, var last: DiagnosticEvent, var count: Int)
     private val repeats = linkedMapOf<String, Repeated>()
     val storageError = MutableStateFlow<String?>(null)
@@ -53,10 +55,13 @@ class DiagnosticLogger(context: Context, private val maxBytes: Long = 10L * 1024
     } }
     fun trace(): String = UUID.randomUUID().toString()
     fun event(stage: String, status: String, success: Boolean = true, reason: String = "", trace: String = sessionId,
-              details: Map<String, String> = emptyMap(), duration: Long = 0, error: Throwable? = null, kind: String = stage) {
+              details: Map<String, String> = emptyMap(), duration: Long = 0, error: Throwable? = null, kind: String = stage, parentTrace: String = "") {
         val item = DiagnosticEvent(sessionId = sessionId, traceId = trace, kind = kind, stage = stage, status = status,
             success = success, reason = reason, durationMs = duration, details = details,
-            stack = error?.let { it.javaClass.name + "\n" + it.stackTrace.take(24).joinToString("\n") }.orEmpty())
+            stack = error?.let { it.javaClass.name + "\n" + it.stackTrace.take(24).joinToString("\n") +
+                (it.cause?.let { cause -> "\nCaused by ${cause.javaClass.name}\n" + cause.stackTrace.take(12).joinToString("\n") } ?: "") }.orEmpty(),
+            exceptionClass = error?.javaClass?.name.orEmpty(), exceptionMessage = error?.message?.let(::safeExceptionMessage).orEmpty(),
+            causeClass = error?.cause?.javaClass?.name.orEmpty(), causeMessage = error?.cause?.message?.let(::safeExceptionMessage).orEmpty(), parentTraceId = parentTrace)
         if (!queue.trySend {
             val lost = dropped.getAndSet(0)
             if (lost > 0) append(DiagnosticEvent(sessionId = sessionId, traceId = trace, kind = "AGGREGATE", stage = "logging",
@@ -69,6 +74,21 @@ class DiagnosticLogger(context: Context, private val maxBytes: Long = 10L * 1024
             } else {
                 flushRepeats(expiredOnly = true); append(item); repeats[key] = Repeated(item, item, 0)
             }
+        }.isSuccess) dropped.incrementAndGet()
+    }
+    private fun safeExceptionMessage(message: String): String = message.take(1500)
+        .replace(Regex("(?i)(authorization|password|token|secret|api[_-]?key)\\s*[:=]\\s*[^\\s,;]+"), "$1=[redacted]")
+    /** Raw diagnostic payloads share the existing opt-in snapshot/export boundary. */
+    fun sensitive(stage: String, trace: String, details: Map<String, String>) {
+        val now = SystemClock.elapsedRealtime()
+        if (!textConsent || now >= detailedUntil.value) return
+        val previous = sensitiveTimes[stage]
+        if (previous != null && now - previous < 2000) return
+        sensitiveTimes[stage] = now
+        val payload = details.mapValues { it.value.take(10000) } + mapOf("traceId" to trace, "stage" to stage, "containsText" to "true", "time" to ZonedDateTime.now().toString())
+        if (!queue.trySend {
+            File(directory, "snapshots").mkdirs()
+            File(directory, "snapshots/${System.currentTimeMillis()}-${UUID.randomUUID()}.json").writeText(json.encodeToString(payload)); prune()
         }.isSuccess) dropped.incrementAndGet()
     }
     private fun flushRepeats(expiredOnly: Boolean = false) {

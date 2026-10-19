@@ -11,6 +11,8 @@ import com.charmjh7.baeminblack.BlackApplication
 import com.charmjh7.baeminblack.backup.BackupManager
 import com.charmjh7.baeminblack.data.*
 import com.charmjh7.baeminblack.share.ShareImportHandler
+import com.charmjh7.baeminblack.share.ShareLinkParser
+import com.charmjh7.baeminblack.share.RecentBaeminDetail
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -55,10 +57,19 @@ class BlackViewModel(application: Application, private val saved: SavedStateHand
         if (busy) { queuedIntent = Intent(intent); return }
         saved["last_intent"] = key
         if (text.isNotBlank()) work {
+            // Capture before the network lookup: the Android chooser may outlive the short validity window.
+            val observed = if (ShareLinkParser.urls(text).isNotEmpty()) RecentBaeminDetail.consumeFresh() else null
             val draft = ShareImportHandler().receive(text, title)
-            val existing = draft.identity.shopNo?.let { repo.byNumber(it) }
+            val trusted = observed?.takeIf {
+                draft.identity.name.isBlank() &&
+                    (draft.identity.shopNo == null || it.shopNo == null || draft.identity.shopNo == it.shopNo)
+            }
+            val name = trusted?.name ?: draft.identity.name
+            val branch = trusted?.branch ?: draft.identity.branch
+            val number = draft.identity.shopNo ?: trusted?.shopNo
+            val existing = number?.let { repo.byNumber(it) }
             if (existing != null) go("detail", existing.id)
-            else newShop(draft.identity.name, draft.identity.branch, draft.identity.shopNo.orEmpty(), draft.url, draft.original)
+            else newShop(name, branch, number.orEmpty(), draft.url, draft.original)
         } else if (intent.hasExtra("shop_id")) go("detail", intent.getStringExtra("shop_id").orEmpty())
         else if (intent.hasExtra("shop_name")) newShop(intent.getStringExtra("shop_name").orEmpty(), intent.getStringExtra("shop_branch").orEmpty(), intent.getStringExtra("shop_no").orEmpty())
     }

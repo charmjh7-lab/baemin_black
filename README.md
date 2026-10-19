@@ -14,7 +14,7 @@
 1. [START_HERE.md](START_HERE.md)와 [AGENTS.md](AGENTS.md)를 확인합니다.
 2. [docs/PRODUCT_BRIEF.md](docs/PRODUCT_BRIEF.md)의 확정된 기능과 [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md)의 미구현 상태를 확인합니다.
 3. 앱 코드를 생성한 뒤 `python3 tools/preflight.py`, `python3 -m unittest discover -s tests`, `./gradlew :app:assembleDebug`를 확인합니다.
-4. GitHub Actions의 **Fast checks**, **Android debug APK**, **Development APK release** 워크플로를 이용합니다.
+4. GitHub Actions의 **Fast checks**는 푸시마다 실행하며, **Android debug APK**와 **Development APK release**는 필요할 때 수동 실행합니다.
 
 현재 단계는 **개발 환경과 프로젝트 지침을 설정한 초기 상태**입니다. Android 소스, Gradle Wrapper, 실제 앱 및 설치 가능한 APK는 이후 개발 작업에서 작성해야 합니다. 이 저장소의 설정 파일이나 워크플로가 존재한다는 사실은 기능 구현·실기기 검증 완료를 뜻하지 않습니다.
 

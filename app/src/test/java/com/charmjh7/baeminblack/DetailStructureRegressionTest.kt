@@ -37,6 +37,16 @@ class DetailStructureRegressionTest {
         assertEquals(ShopScreen.Unknown,ShopScreenDetector().detect(search,emptyList()))
         assertEquals(ShopScreen.Unknown,ShopScreenDetector().detect(original.copy(nodes=original.nodes.take(2)),emptyList()))
     }
+    @Test fun actionValidationUsesTheSameConfirmedContextAndStillRejectsAnotherShop() {
+        val original = page()
+        val flatTitle = original.copy(nodes=original.nodes.map { if (it.index==1) it.copy(heading=false,bounds=Rect(40,180,850,210)) else it })
+        val expected = com.charmjh7.baeminblack.matching.ShopIdentity("처음 보는 치킨", "강남점")
+        val detected = ShopScreenDetector().analyze(flatTitle,emptyList(),expected).screen as ShopScreen.Detail
+        assertTrue(ActionTarget(expected,1,7).accepts(detected.shop.identity,1,7))
+        val other = flatTitle.copy(nodes=flatTitle.nodes.map { if (it.index==1) it.copy(text="다른 가게 서초점") else it })
+        val different = ShopScreenDetector().analyze(other,emptyList(),expected).screen as? ShopScreen.Detail
+        assertFalse(ActionTarget(expected,1,7).accepts(different?.shop?.identity,1,7))
+    }
     @Test fun competingTitlesAreRejected() {
         val original = page()
         val ambiguous = original.copy(nodes=original.nodes + ScreenNode(5,0,"다른 치킨 서초점","",Rect(40,270,850,340),false,true,true))

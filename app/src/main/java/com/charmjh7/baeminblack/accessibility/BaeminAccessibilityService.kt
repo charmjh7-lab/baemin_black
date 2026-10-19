@@ -339,7 +339,7 @@ class BaeminAccessibilityService : AccessibilityService() {
         log.event("quick_action", "VALIDATION_STARTED", trace = b.trace)
         if (b.token != gate.generation || binding?.shop?.identity != b.shop.identity || !validRoot(b.window)) return invalid(b)
         val root = rootInActiveWindow ?: return invalid(b)
-        val fresh = try { detector.analyze(detector.snapshot(root), records.map { it.shop }).screen } finally { root.recycle() }
+        val fresh = try { detector.analyze(detector.snapshot(root), records.map { it.shop }, b.shop.identity).screen } finally { root.recycle() }
         val valid = ActionTarget(b.shop.identity, b.window, b.token).accepts((fresh as? ShopScreen.Detail)?.shop?.identity, activeWindow, gate.generation) && validRoot(b.window)
         log.event("quick_action", "TARGET_VALIDATED", valid, if (valid) "" else "STALE_ACTION_TARGET", b.trace)
         if (!valid) { invalid(b); return false }; return true

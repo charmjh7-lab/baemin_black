@@ -74,8 +74,8 @@ def inspect(root: Path, mode="normal"):
     debug = root / ".github/workflows/android-debug.yml"
     if debug.is_file():
         raw = debug.read_text(encoding="utf-8")
-        if re.search(r"(?m)^  push:", raw):
-            errors.append("Debug APK must not rebuild on every push")
+        if "workflow_dispatch:" not in raw:
+            errors.append("Debug APK must support manual builds")
 
     if mode == "release":
         if not gradle_settings:
@@ -111,3 +111,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

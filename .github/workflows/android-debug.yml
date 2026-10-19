@@ -1,6 +1,9 @@
 name: Android debug APK
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['app/**', 'gradle/**', 'gradlew', '*.gradle.kts', 'gradle.properties', 'signing/**', '.github/workflows/android-debug.yml']
 permissions:
   contents: read
 concurrency:
@@ -12,35 +15,35 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-      - name: Detect Android source
-        id: detect
-        shell: bash
-        run: |
-          if [[ -f gradlew && ( -f settings.gradle.kts || -f settings.gradle ) && ( -f app/build.gradle.kts || -f app/build.gradle ) ]]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "No Android source yet; build skipped." >> "$GITHUB_STEP_SUMMARY"
-          fi
       - uses: actions/setup-java@v4
-        if: steps.detect.outputs.ready == 'true'
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
-        if: steps.detect.outputs.ready == 'true'
       - uses: gradle/actions/setup-gradle@v4
-        if: steps.detect.outputs.ready == 'true'
-      - name: Assemble debug APK
-        if: steps.detect.outputs.ready == 'true'
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+      - name: Test and assemble debug APK
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon :app:assembleDebug
-      - name: Upload debug APK artifact
-        if: steps.detect.outputs.ready == 'true'
+          ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug
+      - name: Verify APK identity and signature
+        run: python3 tools/verify_apk.py --apk app/build/outputs/apk/debug/app-debug.apk --output app/build/outputs/apk/debug/version-info.json
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: baemin-black-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: BaeminBlack-debug-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/version-info.json
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
+      - name: Upload test and schema evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ github.sha }}
+          path: |
+            app/build/reports/tests/testDebugUnitTest
+            app/schemas
+          if-no-files-found: ignore

@@ -26,6 +26,8 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
       - name: Build development APK
         run: |
           chmod +x gradlew
@@ -66,3 +68,4 @@ jobs:
           TAG="dev-$GITHUB_RUN_NUMBER-$SHORT"
           gh release create "$TAG" deliverable/*.apk deliverable/SHA256SUMS.txt deliverable/version-info.json --target "$GITHUB_SHA" --title "Baemin Black dev APK ($TAG)" --notes "$NOTES" --prerelease
           gh release view "$TAG" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"
+

@@ -1,25 +1,19 @@
-# 구현 및 검증 상태
+# 구현 상태
 
-| 구성 | 상태 | 근거·다음 단계 |
-|---|---|---|
-| GitHub 저장소 | 생성됨 | `charmjh7-lab/baemin_black` |
-| 제품 범위·개발 지침 | 작성됨 | AGENTS.md, docs/PRODUCT_BRIEF.md |
-| Python 사전점검/테스트 | 준비 | GitHub Actions 실행 결과는 별도 확인 |
-| Android 앱 소스 | **미구현** | Kotlin/Compose/Room 생성 필요 |
-| Gradle Wrapper | **미구현** | 앱 생성 시 포함 |
-| 개발 서명 | **미생성** | 최초 Android 구현 시 고정 repo-dev 키 생성/연결 |
-| APK 빌드/Release | **미실행** | 소스·서명 연결 후 수행 |
-| 접근성 노드/배지 실제 동작 | **실기기 미검증** | 배민 설치 기기에서 확인 |
-| 메모/백업 | **미구현** | 앱 개발 시 작성 |
+## 소스 구현
+- Android 독립 앱 / Compose 관리 UI / Room 가게·다중 메모 / 사진 첨부·정리
+- 정확한 식별·별칭·중복 방지 / ACTION_SEND 및 제한된 HTTPS 리디렉션
+- 접근성 서비스 / 제한된 노드 탐색 / 이벤트 병합·취소 / 비터치 배지·상세 진입
+- 스크롤 숨김 및 180ms 재취득 / 앱 이탈·잠금·회전·해제 시 정리
+- ZIP·JSON 백업 / 파일 경로·용량·버전 검증 / 기존 기록 보존 병합
+- 설정 저장 / 접근성 활성화 조회 / 오류 표시·삭제 확인·편집 취소
+- 링크·매칭·스크롤·노드 fixture·Room 저장·사진 포함 복원 단위 테스트
 
-검증 증거 없이 항목을 '완료'로 바꾸지 않는다.
+## 검증
+- 로컬 Python 계약·툴링 검사 10건 통과.
+- Android 빌드/단위 테스트: 최초 CI 검증 대기. 결과 확인 후 업데이트.
+- 실기기 설치, 배민 화면별 노드 노출·좌표·터치 통과·스크롤·상세 진입: 미검증.
 
-## 스타터 패키지 품질 체계 복구 (2026-10-20)
-
-- 원본 기반 상세 절차 복구: `AGENTS.md`, `START_HERE.md`, `docs/DESIGN_SYSTEM.md`, `docs/UX_ACCEPTANCE.md`, `docs/ENGINEERING_CONTRACT.md`, `docs/TEST_STRATEGY.md`, `docs/CI_RELEASE.md`, `docs/SKILLS_POLICY.md`.
-- 재발 방지 사례 26개: `docs/PAST_FAILURE_ATLAS.md` 복구.
-- 로컬 개발 스킬 10개를 원본 내용으로 복구하고 `project-bootstrap` 추가.
-- 도구: `preflight.py` 검사 강화, `doctor.py` GitHub 상태 조회 복구, `external_skills.py` Google 공식 스킬 선택적 설치 복구, `bootstrap.py` 기존 키 보존.
-- CI: 일반 push에는 빠른 검사만, Android APK 빌드·Release는 수동, Android 단위 테스트는 요청 시 실행.
-- **검증 분리:** 원격 커밋 및 파일 존재를 확인함. GitHub Actions 실행 결과에 실패 기록이 있으나 로그 다운로드가 404여서 원인 미확정. 코드 테스트 통과로 주장하지 않음.
-- Android 앱 소스/Gradle Wrapper와 실제 APK는 아직 구현되지 않았음.
+## 권한
+- 접근성 서비스는 사용자가 Android 설정에서 직접 활성화해야 합니다.
+- 원본 APK나 추가 서버 권한은 필요하지 않습니다.

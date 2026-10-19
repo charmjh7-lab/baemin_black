@@ -66,7 +66,7 @@ class TestRestoredStarterBehaviors(unittest.TestCase):
         debug = (ROOT / ".github/workflows/android-debug.yml").read_text()
         self.assertIn("workflow_dispatch:", release)
         self.assertNotIn("\n  push:", release)
-        self.assertNotIn("\n  push:", debug)
+        self.assertIn("workflow_dispatch:", debug)
         self.assertIn("workflow_dispatch:", debug)
 
     def test_preflight_rejects_invalid_skill_metadata(self):
@@ -92,3 +92,4 @@ class TestRestoredStarterBehaviors(unittest.TestCase):
 
 if __name__=="__main__":
     unittest.main()
+

@@ -29,3 +29,9 @@
 | 의도적 기술 부채 | 사용자가 편의를 위해 선택한 trade-off | 동일한 경고를 매번 반복하지 않음 |
 
 새로운 중요한 결정이 생길 때만 날짜·출처·근거·영향을 추가한다. 기존 승인 UI, applicationId, 앱 데이터 및 개발 서명을 미승인으로 교체하지 않는다. 분석만 요청받은 경우 변경 0건을 유지한다.
+
+
+## 최초 구현 반영
+- 현재 사용자 요청에 따라 앱 소스가 바뀌는 main push와 수동 실행에서 debug 테스트·APK Artifact 업로드를 수행한다. 이전 수동 전용 debug 정책보다 현재 요청을 우선한다.
+- 앱 ID `com.charmjh7.baeminblack`, 1.0.0(1), minSdk 26, target/compile API 37. JDK 17과 API 37 지원 AGP 9.4.1을 사용한다.
+- 최초 앱 코드가 구현되었으며 위 표의 ‘미구현’ 행은 초기 상태 이력이다. 검증 결과는 IMPLEMENTATION_STATUS를 따른다.

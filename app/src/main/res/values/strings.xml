@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">배민 블랙</string>
+    <string name="accessibility_description">배달의민족 화면의 가게 이름과 위치를 읽어 개인 블랙리스트 배지와 메모 바로가기를 표시합니다. 화면 캡처나 외부 전송은 하지 않습니다. 권한 없이도 가게와 메모를 관리할 수 있습니다.</string>
+</resources>

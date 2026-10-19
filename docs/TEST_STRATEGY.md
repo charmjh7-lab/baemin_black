@@ -1,4 +1,52 @@
-# 배민 블랙 검증
+# 최소 비용·최대 효용 검증
+
+## 단계별 기본값
+
+| 상황 | 자동 검증 기본 | 실행하지 않는 것 | 중요 추가 조건 |
+|---|---|---|---|
+| 문서만 변경 | markdown/JSON·preflight | 앱 빌드, Emulator, APK | 참조 경로 확인 |
+| 작은 버그·버튼 | 관련 단위 테스트/컴파일, 관련 화면 1~2개 | 전체 UI 투어, 릴리스 | 이전 버그 1회 재현 |
+| 새로운 화면 | 화면 이벤트·상태·테마/키보드, 빌드 | 테스트용 프로토타입 여러 개 | 빈/긴 데이터 |
+| 핵심 경험 변경 | 제품별 여정, 위치/세션 복원, 핵심 로직 | 무관 앱 전체 E2E | 실제 기기 상호작용 가능하면 선택 |
+| 데이터 구조·권한·인증 | 마이그레이션·실패·회복 테스트 | 관련 안전 검증 생략 | 복원 경로 필요 |
+| 성능 | 동일 조건 baseline/profile 비교 | 이유 없는 전체 재작성 | debug/release 모드 해석 |
+| APK 요청 | release 경로·서명·패키지/versionCode·실제 파일 존재 | 수십 번 재빌드 | 동일 서명 업데이트 확인 |
+
+## 테스트 출처와 판정
+
+- `PASS (code)` = 컴파일/테스트 출력 확인. 실제 화면을 보았다는 뜻 아님.
+- `PASS (screenshot)` = 현재 렌더의 스냅샷 일부 확인. 눌러 동작할지는 알 수 없음.
+- `PASS (emulator)` = Android 가상기기 조작 확인. 삼성/폴더블 전용 UI 보증 아님.
+- `PASS (physical)` = 해당 실기기 조건에서 사람/자동화가 실행했음을 기록.
+- `UX accepted by user` = 사용자가 실제 사용해서 승인. 모델이 스스로 표시 금지.
+- `NOT VERIFIED` = 접근할 수 없는 환경은 명시, 통과 처리하지 않음.
+
+## 테스트 비용 가드
+
+- 이미 실행한 동일 커밋·동일 조건 테스트 재실행 최소화.
+- Android Gradle 빌드/SDK 설치는 캐시 사용 가능하면 재사용.
+- GitHub의 모든 push에서 APK assemble/Playwright 전체 배포를 하지 않는다.
+- PR와 수동 run에는 테스트를 확대할 수 있지만 프로젝트 규모에 맞춘다.
+- 사용자가 APK를 요청하기 전에는 APK 아티팩트를 남발하지 않는다.
+- 실기기 유효성은 실제 검증 가능한 경우에만 주장한다.
+
+## 초기화 시 에이전트가 채울 사항
+
+| 범위 | 명령/경로 | 성공 기준 | 현재 상태 |
+|---|---|---|---|
+| 빠른 CI | `python3 tools/preflight.py` | 정상 설정과 문서 | starter 제공 |
+| Python 툴링 | `python3 -m unittest discover -s tests` | 스크립트 자체 동작 | starter 제공 |
+| Android 컴파일 | `./gradlew :app:compileDebugKotlin` 또는 실제 모듈별 | exit 0 | 앱 생성 후 확정 |
+| Android unit | `./gradlew :app:testDebugUnitTest` 또는 실제 모듈별 | exit 0 | 앱 생성 후 확정 |
+| Web install/test | lockfile에 맞는 `npm ci && npm test --if-present` 등 | exit 0 | 앱 생성 후 확정 |
+| 키 사용자 여정 | 프로젝트별 1~3개 | 상태/복귀/실제 결과 | 앱 생성 후 채움 |
+| 설치 배포 | GitHub Releases에서 직접 `.apk` | 설치 가능 & 올바른 개발 서명 | 사용자가 요청 시 |
+
+
+---
+
+## 배민 블랙 적용 계약 (기존 프로젝트 명세 보존)
+
 
 1. **모든 push**: Python 사전 점검, 툴링 유닛 테스트(빠르게).
 2. **Android 앱 소스 생성 후**: Android debug APK 빌드; 중요한 모델/링크/매칭/Room/스크롤 상태 유닛 테스트.

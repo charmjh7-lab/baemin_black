@@ -82,7 +82,7 @@
 - 사용자가 기능 구현을 요청하는 경우 결과는 실제 코드, 테스트, 커밋, 빌드로 제출한다. 문서/계획으로만 완료 처리하지 않는다.
 
 ## 검증/전달
-- 빠른 계약/툴링 검증은 일반 push, Android debug APK는 소스가 준비된 후 push/수동 작업, GitHub Releases APK는 수동 작업으로 분리한다.
+- 빠른 계약/툴링 검증은 일반 push, Android debug APK는 소스가 준비된 후 수동 작업, GitHub Releases APK는 수동 작업으로 분리한다.
 - 빌드 성공, 실기기에서 배민 화면을 읽은 사실, 실제 동작 검증을 각각 구분해 보고한다.
 - 변경 전후 applicationId, versionCode, 서명키와 Room 마이그레이션을 보존한다.
 - 필요한 스킬만 선택: `android-lifecycle`, `interaction-completeness`, `visual-quality`, `scope-and-provenance`, `risk-based-verification`, `ci-apk-delivery`.

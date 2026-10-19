@@ -10,10 +10,18 @@
 - 링크·매칭·스크롤·노드 fixture·Room 저장·사진 포함 복원 단위 테스트
 
 ## 검증
-- 로컬 Python 계약·툴링 검사 10건 통과.
-- Android 빌드/단위 테스트: 최초 CI 검증 대기. 결과 확인 후 업데이트.
+- Python 계약·툴링 검사 11건 통과.
+- Android 자동 테스트 17건 통과(실패·건너뜀 0), assembleDebug 성공.
+- Robolectric에서 권한 없는 관리 화면 실행 → 가게 등록 → 블랙리스트 분류 → 메모 저장 → Activity 재생성 후 기록 유지 확인.
+- 앱 ID `com.charmjh7.baeminblack`, 버전 1.0.0(1), 고정 개발 서명 검증 성공.
+- 빌드 소스 커밋 `2b3c5e510b83ce7a2acfcd38729e803739079048`.
+- [성공한 GitHub Actions 실행](https://github.com/charmjh7-lab/baemin_black/actions/runs/39294205714) / [APK Artifact](https://github.com/charmjh7-lab/baemin_black/actions/runs/39294205714/artifacts/12207201707).
+- 내려받은 APK도 로컬에서 앱 ID·버전·서명이 일치함을 재확인.
 - 실기기 설치, 배민 화면별 노드 노출·좌표·터치 통과·스크롤·상세 진입: 미검증.
 
 ## 권한
 - 접근성 서비스는 사용자가 Android 설정에서 직접 활성화해야 합니다.
 - 원본 APK나 추가 서버 권한은 필요하지 않습니다.
+
+## 미구현 항목
+요청된 기능의 코드 미구현 항목은 없습니다. 배민 실제 화면에서의 인식 범위와 오버레이 동작은 위 실기기 검증 항목으로 남아 있습니다.

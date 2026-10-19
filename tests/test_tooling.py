@@ -36,6 +36,11 @@ class TestStarter(unittest.TestCase):
     def test_apk_metadata(self):
         self.assertEqual(("com.charmjh7.baeminblack",7),APK.parse_aapt_badging("package: name='com.charmjh7.baeminblack' versionCode='7' versionName='1'"))
         self.assertEqual("abcd",APK.extract_apk_digest("Signer #1 certificate SHA-256 digest: ab:cd"))
+    def test_sdk37_signer_output(self):
+        digest="7f93d29c08517e44a86e54bb8c00d5aac7f8ed868f3191aff2d5ec10ba639afe"
+        self.assertEqual(digest,APK.extract_apk_digest("V3.0 Signer: certificate SHA-256 digest: "+digest))
+        with self.assertRaises(RuntimeError):
+            APK.extract_apk_digest("Signer #1 certificate SHA-256 digest: aaaa\nSigner #2 certificate SHA-256 digest: bbbb")
     def test_update_compatibility(self):
         old={"application_id":"a.b","version_code":5,"certificate_sha256":"abc"}
         new={**old,"version_code":6}
@@ -67,7 +72,7 @@ class TestRestoredStarterBehaviors(unittest.TestCase):
         self.assertIn("workflow_dispatch:", release)
         self.assertNotIn("\n  push:", release)
         self.assertIn("workflow_dispatch:", debug)
-        self.assertIn("workflow_dispatch:", debug)
+        self.assertIn("branches: [main]", debug)
 
     def test_preflight_rejects_invalid_skill_metadata(self):
         import tempfile

@@ -24,9 +24,12 @@ def parse_aapt_badging(raw):
     return m.group(1),int(m.group(2))
 
 def extract_apk_digest(raw):
-    m=re.search(r"Signer #1 certificate SHA-256 digest:\s*([A-Fa-f0-9:]+)",raw)
-    if not m:raise RuntimeError("Signer digest missing")
-    return re.sub("[^0-9a-f]","",m.group(1).lower())
+    # Build Tools 37 uses 'V3.0 Signer:' while older tools use 'Signer #1'.
+    matches=re.findall(r"(?:Signer #\d+|V\d+(?:\.\d+)? Signer:) certificate SHA-256 digest:\s*([A-Fa-f0-9:]+)",raw)
+    digests={re.sub("[^0-9a-f]","",value.lower()) for value in matches}
+    if not digests:raise RuntimeError("Signer digest missing")
+    if len(digests)!=1:raise RuntimeError("Unexpected multiple signing certificates")
+    return digests.pop()
 
 def expected_digest(root):
     props={}
@@ -71,3 +74,4 @@ if __name__=="__main__":
         print(json.dumps(data,indent=2))
     except (OSError,RuntimeError,ValueError,KeyError,subprocess.TimeoutExpired) as exc:
         print("APK VERIFY ERROR: "+str(exc),file=sys.stderr);sys.exit(1)
+

@@ -29,6 +29,7 @@ class ShopScreenDetector {
             val index = result.size
             val bounds = Rect().also(node::getBoundsInScreen)
             result += ScreenNode(index, parent, node.text?.toString().orEmpty().ifBlank { node.contentDescription?.toString().orEmpty() }, node.viewIdResourceName.orEmpty(), bounds, node.isClickable, node.isHeading, node.isVisibleToUser)
+            if (node.childCount > 150) truncated = true
             for (i in 0 until node.childCount.coerceAtMost(150)) {
                 if (result.size >= MAX_NODES) { truncated = true; break }
                 val child = node.getChild(i) ?: continue

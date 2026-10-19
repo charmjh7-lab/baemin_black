@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['app/**', 'gradle/**', 'gradlew', '*.gradle.kts', 'gradle.properties', 'signing/**', '.github/workflows/android-debug.yml']
+    paths: ['app/**', 'gradle/**', 'gradlew', '*.gradle.kts', 'gradle.properties', 'signing/**', 'tools/verify_apk.py', '.github/workflows/android-debug.yml']
 permissions:
   contents: read
 concurrency:

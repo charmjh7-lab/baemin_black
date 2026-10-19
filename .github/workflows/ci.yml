@@ -1,17 +1,47 @@
 name: Fast checks
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      android_unit_tests:
+        description: Run Android unit tests on demand
+        type: boolean
+        required: false
+        default: false
 permissions:
   contents: read
 concurrency:
-  group: fast-checks
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  contract-tests:
+  fast:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Validate project setup
+      - name: Validate project contract
         run: python3 tools/preflight.py
-      - name: Run starter tests
+      - name: Run tool tests
         run: python3 -m unittest discover -s tests -v
+  android-manual-unit:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.android_unit_tests }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require actual Android project
+        run: |
+          test -f gradlew || { echo 'Gradle Wrapper missing'; exit 1; }
+          python3 tools/preflight.py
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run Android unit tests
+        run: |
+          chmod +x gradlew
+          MODULE=$(python3 -c 'import json; print(json.load(open("project.json"))["android"].get("module","app"))')
+          ./gradlew --no-daemon ":${MODULE}:testDebugUnitTest"

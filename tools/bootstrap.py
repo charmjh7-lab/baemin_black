@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a stable development-only keystore AFTER Gradle source exists."""
+"""Idempotent Android development signing initialization. Never rotate installed identity."""
 from pathlib import Path
 import argparse, json, re, secrets, shutil, subprocess, sys
 
@@ -18,9 +18,22 @@ def bootstrap(root, apply=False, signing="preserve"):
         print("DRY RUN: app ID matches; no files changed")
         return
     if signing == "preserve":
-        print("Existing signing preserved")
+        print("Existing signing preserved; no configuration changed")
         return
     base = root / "signing"
+    # Preserve pre-existing non-template signing identities instead of adding a second key.
+    if signing == "repo-dev" and base.exists():
+        other = [
+            file for pattern in ("*.jks", "*.keystore", "*.p12")
+            for file in base.glob(pattern)
+            if file.name != "dev-only.p12"
+        ]
+        if other:
+            print("Existing non-template signing material detected; preserving configuration")
+            cfg["android"]["development_signing"] = "preserve"
+            cfg["status"] = "source_detected"
+            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2)+"\\n")
+            return
     key, props = base / "dev-only.p12", base / "dev-signing.properties"
     if key.exists() != props.exists():
         raise RuntimeError("Partial signing files found, refusing key rotation")

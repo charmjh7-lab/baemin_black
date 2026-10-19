@@ -25,7 +25,15 @@ class BaeminAccessibilityService : AccessibilityService() {
     private val app get() = application as BlackApplication
     private val log get() = app.diagnostics
     private val health get() = app.serviceStatus
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + CoroutineExceptionHandler { _, error ->
+        if (error !is CancellationException) {
+            log.event("service", "TASK_EXCEPTION", false, "SERVICE_TASK_ERROR", error = error)
+            health.change { it.copy(error = "SERVICE_TASK_ERROR") }
+            runCatching { if (targetActive) showStatus() }.onFailure {
+                log.event("status_overlay", "REFRESH_FAILED", false, "STATUS_REFRESH_ERROR", error = it)
+            }
+        }
+    })
     private val detector = ShopScreenDetector()
     private val gate = ScrollBadgeState()
     private val scheduler = AnalysisScheduler()
@@ -91,6 +99,7 @@ class BaeminAccessibilityService : AccessibilityService() {
         monitor?.cancel()
         monitor = scope.launch {
             while (isActive && connected) { delay(1000)
+                try {
                 if (targetActive && !usable()) deactivate("SCREEN_LOCKED")
                 if (targetActive) {
                     val root = rootInActiveWindow
@@ -98,6 +107,8 @@ class BaeminAccessibilityService : AccessibilityService() {
                     finally { @Suppress("DEPRECATION") root?.recycle() }
                 }
                 aggregateEvents()
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { failure("service", "LIFECYCLE_MONITOR_ERROR", e) }
             }
         }
         schedule(0)

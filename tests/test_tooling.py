@@ -43,5 +43,52 @@ class TestStarter(unittest.TestCase):
         with self.assertRaises(RuntimeError): APK.compare_new_to_previous(old,new)
         with self.assertRaises(RuntimeError): APK.compare_new_to_previous({**new,"certificate_sha256":"x"},old)
 
+
+class TestRestoredStarterBehaviors(unittest.TestCase):
+    def test_design_and_ux_original_contracts_retained(self):
+        design = (ROOT / "docs/DESIGN_SYSTEM.md").read_text(encoding="utf-8")
+        ux = (ROOT / "docs/UX_ACCEPTANCE.md").read_text(encoding="utf-8")
+        self.assertIn("디자인 결정의 출발점", design)
+        self.assertIn("화면 문구는 디자인과 함께 결정", design)
+        self.assertIn("기본 UI 라이브러리", design)
+        self.assertIn("조작이 보이는지와 실제 닿는지 구별", ux)
+        self.assertIn("추가 스크롤 없이", ux)
+        self.assertIn("배민 블랙", design)
+
+    def test_failure_atlas_and_bootstrap_skill_present(self):
+        atlas = (ROOT / "docs/PAST_FAILURE_ATLAS.md").read_text(encoding="utf-8")
+        self.assertIn("26.", atlas)
+        skill = (ROOT / ".agents/skills/project-bootstrap/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("Project bootstrap", skill)
+
+    def test_release_and_android_build_are_opt_in(self):
+        release = (ROOT / ".github/workflows/release-apk.yml").read_text()
+        debug = (ROOT / ".github/workflows/android-debug.yml").read_text()
+        self.assertIn("workflow_dispatch:", release)
+        self.assertNotIn("\n  push:", release)
+        self.assertNotIn("\n  push:", debug)
+        self.assertIn("workflow_dispatch:", debug)
+
+    def test_preflight_rejects_invalid_skill_metadata(self):
+        import tempfile
+        from shutil import copytree
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            (directory / "project.json").write_text((ROOT / "project.json").read_text())
+            target = directory / ".agents/skills/invalid/SKILL.md"
+            target.parent.mkdir(parents=True)
+            target.write_text("# Missing frontmatter", encoding="utf-8")
+            errors, _, _ = PRE.inspect(directory)
+            self.assertTrue(any("Invalid skill frontmatter" in err for err in errors))
+
+    def test_official_skill_selection_does_not_install_by_default(self):
+        sk = load("external_skills", "external_skills.py")
+        self.assertEqual([], sk.select("bootstrap", {"android": False, "compose": False}))
+        self.assertEqual(
+            ["android-cli", "testing-setup"],
+            sk.select("bootstrap", {"android": True, "compose": False})
+        )
+        self.assertNotIn("adaptive", sk.select("foldable", {"android": True, "compose": False}))
+
 if __name__=="__main__":
     unittest.main()

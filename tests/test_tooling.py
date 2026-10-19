@@ -19,7 +19,16 @@ class TestStarter(unittest.TestCase):
         self.assertTrue(notes)
     def test_release_requires_real_app_and_signing(self):
         errors,_,_=PRE.inspect(ROOT,"release")
-        self.assertTrue(any("Release blocked" in x for x in errors))
+        source_ready = (ROOT/"gradlew").is_file() and (
+            (ROOT/"settings.gradle.kts").is_file() or (ROOT/"settings.gradle").is_file()
+        ) and ((ROOT/"app/build.gradle.kts").is_file() or (ROOT/"app/build.gradle").is_file())
+        signing_ready = (ROOT/"signing/dev-only.p12").is_file() and (
+            ROOT/"signing/dev-signing.properties").is_file()
+        cfg=json.loads((ROOT/"project.json").read_text())
+        if source_ready and signing_ready and cfg["android"]["development_signing"]=="repo-dev":
+            self.assertEqual([],errors)
+        else:
+            self.assertTrue(any("Release blocked" in x for x in errors))
     def test_identity(self):
         cfg=json.loads((ROOT/"project.json").read_text())
         self.assertEqual("android",cfg["platform"])

@@ -4,133 +4,331 @@ import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
 import android.content.*
 import android.content.res.Configuration
+import android.database.ContentObserver
 import android.graphics.Rect
-import android.os.Build
-import android.os.PowerManager
-import android.os.SystemClock
-import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityWindowInfo
+import android.os.*
+import android.provider.Settings
+import android.view.accessibility.*
+import android.widget.Toast
 import com.charmjh7.baeminblack.BlackApplication
+import com.charmjh7.baeminblack.MainActivity
 import com.charmjh7.baeminblack.data.*
-import com.charmjh7.baeminblack.matching.ShopMatcher
+import com.charmjh7.baeminblack.diagnostics.*
+import com.charmjh7.baeminblack.matching.*
 import com.charmjh7.baeminblack.overlay.*
 import com.charmjh7.baeminblack.share.RecentBaeminDetail
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.catch
 
 class BaeminAccessibilityService : AccessibilityService() {
-    companion object { const val TARGET_PACKAGE = "com.sampleapp"; private const val CONTENT_MERGE_MS = 85L }
+    companion object { const val TARGET_PACKAGE = "com.sampleapp" }
+    private val app get() = application as BlackApplication
+    private val log get() = app.diagnostics
+    private val health get() = app.serviceStatus
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val detector = ShopScreenDetector()
     private val gate = ScrollBadgeState()
+    private val scheduler = AnalysisScheduler()
     private var analysis: Job? = null
-    private var dataCollection: Job? = null
-    private var receiverRegistered = false
+    private var collecting: Job? = null
+    private var monitor: Job? = null
+    private var connected = false
+    private var registered = false
+    private var records: List<ShopWithNotes> = emptyList()
+    private var prefs = OverlaySettings()
+    private var activeWindow = -1
+    private var targetActive = false
+    private var viewport = Rect()
+    private var binding: Binding? = null
+    private var undoTicket: ShopRepository.StatusUndo? = null
+    private var saving = false
+    private var eventCount = 0
+    private var firstEventAt = 0L
+    private var lastEventAt = 0L
+    private var lastAggregate = 0L
     private lateinit var badges: BadgeOverlayController
     private lateinit var detail: DetailOverlayController
-    private var records: List<ShopWithNotes> = emptyList()
-    private var settings = OverlaySettings()
-    private var targetActive = false
+    private lateinit var status: ServiceStatusOverlayController
+    data class Binding(val shop: DetectedShop, val window: Int, val token: Long, val trace: String, val record: Shop?)
     private val screenReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) { clear(); RecentBaeminDetail.clear(); targetActive = false }
+        override fun onReceive(context: Context?, intent: Intent?) {
+            log.event("service", intent?.action.orEmpty()); deactivate("SCREEN_LOCKED")
+            if (intent?.action == Intent.ACTION_USER_PRESENT) schedule(0)
+        }
+    }
+    private val settingsObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+                .split(':').mapNotNull(ComponentName::unflattenFromString).contains(ComponentName(this@BaeminAccessibilityService, BaeminAccessibilityService::class.java))
+            log.event("service", "ACCESSIBILITY_SETTING_CHANGED", details = mapOf("enabled" to enabled.toString()))
+            if (!enabled) { connected = false; deactivate("PERMISSION_REVOKED"); health.disconnect("PERMISSION_REVOKED") }
+        }
     }
     override fun onServiceConnected() {
         super.onServiceConnected()
-        clear(); dataCollection?.cancel()
-        if (::badges.isInitialized) badges.destroy()
-        badges = BadgeOverlayController(this); detail = DetailOverlayController(this)
-        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
-        if (!receiverRegistered) {
+        log.event("service", "CONNECT_STARTED")
+        if (::status.isInitialized) { deactivate("RECONNECTED"); badges.destroy() }
+        connected = true
+        badges = BadgeOverlayController(this, log, ::overlayResult)
+        detail = DetailOverlayController(this, log, ::overlayResult)
+        status = ServiceStatusOverlayController(this, log, ::overlayResult)
+        health.change { it.copy(service = StageStatus("SERVICE_CONNECTED"), error = "") }
+        log.event("service", "SERVICE_CONNECTED")
+        if (!registered) {
+            val filter = IntentFilter().apply { addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_USER_PRESENT) }
             if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenReceiver, filter, RECEIVER_NOT_EXPORTED) else registerReceiver(screenReceiver, filter)
-            receiverRegistered = true
+            contentResolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), false, settingsObserver)
+            registered = true
         }
-        val app = application as BlackApplication
-        dataCollection = scope.launch {
-            combine(app.repository.shops, app.settings.flow) { rows, prefs -> rows to prefs }
-                .catch { records = emptyList(); clear() }.collect { (rows, prefs) ->
-                records = rows; settings = prefs
-                if (targetActive) { clear(); schedule(0) }
+        collecting?.cancel()
+        collecting = scope.launch {
+            try { combine(app.repository.shops, app.settings.flow) { rows, settings -> rows to settings }.collect { (rows, settings) ->
+                records = rows; prefs = settings
+                if (targetActive) { showStatus(); schedule(0) }
+            } } catch (e: CancellationException) { throw e } catch (e: Exception) { failure("repository", "ROOM_OBSERVE_ERROR", e) }
+        }
+        monitor?.cancel()
+        monitor = scope.launch {
+            while (isActive && connected) { delay(1000)
+                if (targetActive && !usable()) deactivate("SCREEN_LOCKED")
+                if (targetActive) {
+                    val root = rootInActiveWindow
+                    try { if (root != null && root.packageName?.toString() != TARGET_PACKAGE) deactivate("TARGET_INACTIVE") }
+                    finally { @Suppress("DEPRECATION") root?.recycle() }
+                }
+                aggregateEvents()
             }
         }
         schedule(0)
     }
+    private fun usable() = connected && getSystemService(PowerManager::class.java).isInteractive && !getSystemService(KeyguardManager::class.java).isKeyguardLocked
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null || !::badges.isInitialized) return
+        if (event == null || !connected || !::status.isInitialized) return
+        try { handleEvent(event) } catch (e: Exception) { failure("service", "EVENT_PROCESSING_ERROR", e) }
+    }
+    private fun handleEvent(event: AccessibilityEvent) {
+        if (!usable()) { deactivate("SCREEN_LOCKED"); return }
+        val pkg = event.packageName?.toString()
         if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            // Our overlay windows also emit window events; they must not tear themselves down.
             val changed = windows.firstOrNull { it.id == event.windowId }
-            if (changed?.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) return
-            val meaningful = AccessibilityEvent.WINDOWS_CHANGE_ACTIVE or AccessibilityEvent.WINDOWS_CHANGE_FOCUSED or AccessibilityEvent.WINDOWS_CHANGE_BOUNDS or AccessibilityEvent.WINDOWS_CHANGE_LAYER
-            if (event.windowChanges and meaningful == 0) return
-            clear()
-            schedule(CONTENT_MERGE_MS)
+            if (changed?.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY || pkg == this.packageName) {
+                log.event("scheduler", "SKIPPED", reason = "SELF_OVERLAY_WINDOW"); return
+            }
+            // Removed overlay windows are absent from windows. The active application root decides validity.
+            val root = rootInActiveWindow
+            try {
+                if (root?.packageName?.toString() == TARGET_PACKAGE) {
+                    if (!targetActive || activeWindow != root.windowId || event.windowChanges and AccessibilityEvent.WINDOWS_CHANGE_BOUNDS != 0) {
+                        activate(root.windowId); schedule(85)
+                    }
+                    return
+                }
+                if (root != null) deactivate("TARGET_INACTIVE")
+            } finally { @Suppress("DEPRECATION") root?.recycle() }
             return
         }
-        val packageName = event.packageName?.toString()
-        if (packageName != TARGET_PACKAGE) {
-            // Observe window transitions from other apps only to clear; never traverse their trees.
-            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-                clear(); targetActive = false
+        if (pkg != TARGET_PACKAGE) {
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                log.event("service", "OTHER_PACKAGE_EVENT", details = mapOf("package" to pkg.orEmpty()))
+                deactivate("TARGET_INACTIVE")
             }
             return
         }
-        targetActive = true
+        eventCount++; val now = SystemClock.elapsedRealtime(); if (firstEventAt == 0L) firstEventAt = now; lastEventAt = now
+        if (!targetActive) log.event("service", "TARGET_EVENT_RECEIVED", details = mapOf("type" to event.eventType.toString(), "window" to event.windowId.toString()))
+        activate(event.windowId)
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                RecentBaeminDetail.clear(); analysis?.cancel(); gate.scroll(SystemClock.uptimeMillis()); badges.hide(); detail.hide(); schedule(ScrollBadgeState.SCROLL_SETTLE_MS)
+                if (gate.remaining(SystemClock.uptimeMillis()) == 0L) log.event("scheduler", "SCROLL_STARTED")
+                cancelAnalysis("SCROLL_IN_PROGRESS"); gate.scroll(SystemClock.uptimeMillis()); binding = null
+                badges.hide("SCROLL_IN_PROGRESS"); detail.hide("SCROLL_IN_PROGRESS"); RecentBaeminDetail.clear()
+                health.change { it.copy(screen = StageStatus("SHOP_UNRECOGNIZED"), shopLabel = "", matching = StageStatus("NOT_MATCHED"), overlay = StageStatus("HIDDEN")) }
+                showStatus(); schedule(ScrollBadgeState.SCROLL_SETTLE_MS)
             }
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED -> { clear(); schedule(CONTENT_MERGE_MS) }
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // Do not keep a possibly stale location on screen while a list is being rebuilt.
-                badges.hide(); detail.hide(); schedule(maxOf(CONTENT_MERGE_MS, gate.remaining(SystemClock.uptimeMillis())))
-            }
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> { invalidate("SCREEN_TRANSITION"); showStatus(); schedule(85) }
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> { badges.hide("CONTENT_CHANGED"); schedule(85) }
         }
+    }
+    private fun activate(window: Int) {
+        if (activeWindow != window && window >= 0) { invalidate("WINDOW_CHANGED"); activeWindow = window; log.event("service", "SCREEN_CHANGED", details = mapOf("window" to window.toString())) }
+        val wasActive = targetActive; targetActive = true
+        health.change { it.copy(target = StageStatus("TARGET_DETECTED"), lastTarget = System.currentTimeMillis()) }
+        if (!wasActive || viewport.isEmpty) {
+            val metrics = resources.displayMetrics; viewport = Rect(0, 0, metrics.widthPixels, metrics.heightPixels); showStatus()
+        }
+    }
+    private fun aggregateEvents() {
+        if (eventCount > 0) { log.event("service", "TARGET_EVENTS_AGGREGATED", details = mapOf("count" to eventCount.toString(),
+            "firstElapsed" to firstEventAt.toString(), "lastElapsed" to lastEventAt.toString())); eventCount = 0; firstEventAt = 0 }
+    }
+    private fun cancelAnalysis(reason: String) {
+        if (analysis?.isActive == true) { log.event("scheduler", "ANALYSIS_CANCELLED", reason = reason); analysis?.cancel() }
+        analysis = null; scheduler.started()
+    }
+    private fun invalidate(reason: String) {
+        cancelAnalysis(reason); gate.invalidate(); binding = null; undoTicket = null; RecentBaeminDetail.clear()
+        if (::badges.isInitialized) { badges.hide(reason); detail.hide(reason) }
+        health.change { it.copy(screen = StageStatus("SHOP_UNRECOGNIZED"), matching = StageStatus("NOT_MATCHED"), overlay = StageStatus("HIDDEN"), shopLabel = "") }
+    }
+    private fun deactivate(reason: String) {
+        invalidate(reason); targetActive = false; activeWindow = -1
+        if (::status.isInitialized) status.hide(reason)
+        health.change { it.copy(target = StageStatus("TARGET_INACTIVE"), error = if (reason == "TARGET_INACTIVE") it.error else reason) }
+    }
+    private fun schedule(delayMs: Long) {
+        if (!connected) return
+        if (analysis?.isActive == true) { log.event("scheduler", "ANALYSIS_MERGED", reason = "SAME_SCREEN_PENDING"); return }
+        val trace = log.trace(); val token = gate.generation
+        val now = SystemClock.uptimeMillis(); val deadline = scheduler.deadline(now)
+        log.event("scheduler", "ANALYSIS_SCHEDULED", trace = trace, details = mapOf("token" to token.toString(), "waitMs" to delayMs.toString(), "maxDeadline" to deadline.toString()))
+        analysis = scope.launch(start = CoroutineStart.LAZY) {
+            delay(if (delayMs >= ScrollBadgeState.SCROLL_SETTLE_MS) delayMs else minOf(delayMs, (deadline - now).coerceAtLeast(0)))
+            scheduler.started()
+            try { analyze(token, trace) }
+            catch (e: CancellationException) { log.event("analysis", "ANALYSIS_CANCELLED", reason = "GENERATION_OR_LIFECYCLE_CHANGED", trace = trace); throw e }
+            catch (e: Exception) { failure("analysis", "ACCESSIBILITY_EXCEPTION", e, trace) }
+        }
+        analysis?.start()
     }
     @Suppress("DEPRECATION")
-    private fun schedule(delayMs: Long) {
-        analysis?.cancel()
-        val token = gate.generation
-        analysis = scope.launch {
-            delay(delayMs)
-            if (!getSystemService(PowerManager::class.java).isInteractive || getSystemService(KeyguardManager::class.java).isKeyguardLocked) { clear(); return@launch }
-            val root = rootInActiveWindow ?: run { clear(); return@launch }
-            if (root.packageName?.toString() != TARGET_PACKAGE) { root.recycle(); clear(); targetActive = false; return@launch }
-            targetActive = true
-            try {
-                val snapshot = withContext(Dispatchers.Default) { detector.snapshot(root) }
-                val rows = records
-                val result = withContext(Dispatchers.Default) { detector.detect(snapshot, rows.map { it.shop }) }
-                ensureActive()
-                if (!gate.mayShow(token, SystemClock.uptimeMillis())) return@launch
-                // Re-check the active root/window after asynchronous analysis; no stale-screen publication.
-                val active = rootInActiveWindow
-                val valid = active != null && active.windowId == snapshot.windowId && active.packageName?.toString() == TARGET_PACKAGE
-                active?.recycle()
-                if (!valid) { clear(); return@launch }
-                val blockers = windows.filter { it.id != snapshot.windowId && it.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && it.layer > (windows.firstOrNull { w -> w.id == snapshot.windowId }?.layer ?: Int.MAX_VALUE) }
-                    .map { w -> Rect().also(w::getBoundsInScreen) }
-                when (result) {
-                    is ShopScreen.Listing -> {
-                        RecentBaeminDetail.clear(); detail.hide()
-                        val matches = if (settings.badges) result.shops.filter { ShopMatcher.match(it.identity, rows.map { r -> r.shop })?.status == ShopStatus.BLOCKED } else emptyList()
-                        badges.update(matches, snapshot.viewport, blockers)
-                    }
-                    is ShopScreen.Detail -> {
-                        RecentBaeminDetail.remember(result.shop.identity); badges.hide()
-                        val match = ShopMatcher.match(result.shop.identity, rows.map { it.shop })
-                        // Ambiguous existing names do not expose any record or a misleading create shortcut.
-                        val ambiguous = match == null && rows.count { ShopMatcher.normalize(it.shop.name) == ShopMatcher.normalize(result.shop.identity.name) } > 0
-                        if (ambiguous) detail.hide() else detail.show(result.shop, rows.firstOrNull { it.shop.id == match?.id }, settings, snapshot.viewport, blockers)
-                    }
-                    ShopScreen.Unknown -> { RecentBaeminDetail.clear(); badges.hide(); detail.hide() }
+    private suspend fun analyze(token: Long, trace: String) {
+        if (!usable()) { deactivate("SCREEN_LOCKED"); return }
+        val start = SystemClock.elapsedRealtime()
+        log.event("analysis", "ANALYSIS_STARTED", trace = trace)
+        val root = rootInActiveWindow
+        if (root == null) { unrecognized("ROOT_UNAVAILABLE", trace); return }
+        try {
+            if (root.packageName?.toString() != TARGET_PACKAGE) { log.event("analysis", "SKIPPED", reason = "WRONG_PACKAGE", trace = trace); deactivate("TARGET_INACTIVE"); return }
+            activate(root.windowId)
+            // activate can invalidate a token when the initial root supplies a previously unknown window.
+            if (token != gate.generation) { log.event("analysis", "SKIPPED", reason = "STALE_WINDOW", trace = trace); analysis = null; schedule(0); return }
+            viewport = Rect().also(root::getBoundsInScreen)
+            log.event("analysis", "ROOT_AVAILABLE", trace = trace, details = mapOf("package" to TARGET_PACKAGE, "windowId" to root.windowId.toString(), "viewport" to viewport.toShortString()))
+            val snapshot = detector.snapshot(root)
+            val report = withContext(Dispatchers.Default) { detector.analyze(snapshot, records.map { it.shop }) }
+            currentCoroutineContext().ensureActive()
+            if (!gate.mayShow(token, SystemClock.uptimeMillis()) || !validRoot(snapshot.windowId)) { log.event("analysis", "SKIPPED", reason = "STALE_WINDOW", trace = trace); return }
+            log.event("analysis", "ANALYSIS_COMPLETED", report.screen != ShopScreen.Unknown, report.reason, trace,
+                report.metrics + ("screen" to report.screen.javaClass.simpleName), SystemClock.elapsedRealtime() - start)
+            if (report.screen == ShopScreen.Unknown) { log.snapshot(snapshot, trace, report.reason, TARGET_PACKAGE); unrecognized(report.reason, trace); return }
+            health.change { it.copy(screen = StageStatus("SCREEN_RECOGNIZED", trace = trace), error = "") }
+            val targetLayer = windows.firstOrNull { it.id == snapshot.windowId }?.layer ?: Int.MAX_VALUE
+            val blockers = windows.filter { it.id != snapshot.windowId && it.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && it.layer > targetLayer }.map { Rect().also(it::getBoundsInScreen) }
+            binding = null
+            when (val result = report.screen) {
+                is ShopScreen.Listing -> {
+                    RecentBaeminDetail.clear(); detail.hide("LISTING")
+                    val matches = result.shops.filter { match(it.identity, trace)?.status == ShopStatus.BLOCKED }
+                    health.change { it.copy(shopLabel = "목록 ${result.shops.size}개 가게", matching = StageStatus(if (matches.isEmpty()) "NOT_MATCHED" else "MATCHED", trace = trace)) }
+                    if (prefs.badges) badges.update(matches, viewport, blockers, trace)
+                    else { badges.hide("SETTING_DISABLED", trace); log.event("badge", "SKIPPED", reason = "SETTING_DISABLED", trace = trace) }
+                    if (matches.isEmpty()) log.event("badge", "SKIPPED", reason = "NO_BLOCKED_MATCH", trace = trace)
                 }
-            } catch (e: CancellationException) { throw e } catch (_: Exception) { badges.hide(); detail.hide() } finally { root.recycle() }
-        }
+                is ShopScreen.Detail -> {
+                    badges.hide("DETAIL", trace)
+                    val record = match(result.shop.identity, trace)
+                    val ambiguous = record == null && records.any { ShopMatcher.normalize(it.shop.name) == ShopMatcher.normalize(result.shop.identity.name) }
+                    if (!ambiguous) {
+                        binding = Binding(result.shop, snapshot.windowId, token, trace, record); RecentBaeminDetail.remember(result.shop.identity)
+                    } else { RecentBaeminDetail.clear(); log.event("matching", "QUICK_ACTION_DISABLED", reason = "AMBIGUOUS_STORED_SHOPS", trace = trace) }
+                    health.change { it.copy(screen = StageStatus("SHOP_RECOGNIZED", trace = trace), shopLabel = result.shop.identity.name + " " + result.shop.identity.branch,
+                        matching = StageStatus(if (record != null) "MATCHED" else "NOT_MATCHED", trace = trace), lastShop = System.currentTimeMillis(),
+                        error = if (ambiguous) "AMBIGUOUS_STORED_SHOPS" else "") }
+                    val b = binding
+                    if (b != null) detail.show(result.shop, records.firstOrNull { it.shop.id == record?.id }, prefs, viewport, blockers, trace, { quickStatus(b) }, { openMemo(b) })
+                    else detail.hide("AMBIGUOUS_IDENTITY")
+                }
+                ShopScreen.Unknown -> Unit
+            }
+            log.event("scheduler", "SCROLL_SETTLED", trace = trace)
+            showStatus()
+        } finally { root.recycle() }
     }
-    private fun clear() { analysis?.cancel(); gate.invalidate(); if (::badges.isInitialized) { badges.hide(); detail.hide() } }
-    override fun onConfigurationChanged(newConfig: Configuration) { super.onConfigurationChanged(newConfig); clear(); if (targetActive) schedule(CONTENT_MERGE_MS) }
-    override fun onInterrupt() { targetActive = false; clear(); RecentBaeminDetail.clear() }
-    override fun onUnbind(intent: Intent?): Boolean { targetActive = false; clear(); RecentBaeminDetail.clear(); return super.onUnbind(intent) }
-    override fun onDestroy() { clear(); RecentBaeminDetail.clear(); scope.cancel(); runCatching { unregisterReceiver(screenReceiver) }; if (::badges.isInitialized) badges.destroy(); super.onDestroy() }
+    private fun match(identity: ShopIdentity, trace: String): Shop? {
+        val report = ShopMatcher.explain(identity, records.map { it.shop })
+        log.event("matching", "MATCH_RESULT", report.shop != null, report.reason, trace, mapOf("hasName" to identity.name.isNotBlank().toString(),
+            "hasBranch" to identity.branch.isNotBlank().toString(), "shopNo" to identity.shopNo.orEmpty(), "basis" to report.basis,
+            "stored" to records.size.toString(), "candidates" to report.candidates.toString(), "blocked" to (report.shop?.status == ShopStatus.BLOCKED).toString()))
+        return report.shop
+    }
+    private fun unrecognized(reason: String, trace: String) {
+        binding = null; RecentBaeminDetail.clear(); badges.hide(reason, trace); detail.hide(reason)
+        health.change { it.copy(screen = StageStatus("SHOP_UNRECOGNIZED", trace = trace), matching = StageStatus("NOT_MATCHED", trace = trace), shopLabel = "", error = reason) }
+        log.event("recognition", "SHOP_UNRECOGNIZED", false, reason, trace); if (targetActive) showStatus()
+    }
+    @Suppress("DEPRECATION") private fun validRoot(window: Int): Boolean {
+        if (!usable() || !targetActive) return false
+        val root = rootInActiveWindow ?: return false
+        return try { root.packageName?.toString() == TARGET_PACKAGE && root.windowId == window } finally { root.recycle() }
+    }
+    @Suppress("DEPRECATION") private suspend fun validate(b: Binding): Boolean {
+        log.event("quick_action", "VALIDATION_STARTED", trace = b.trace)
+        if (b.token != gate.generation || binding?.shop?.identity != b.shop.identity || !validRoot(b.window)) return invalid(b)
+        val root = rootInActiveWindow ?: return invalid(b)
+        val fresh = try { detector.analyze(detector.snapshot(root), records.map { it.shop }).screen } finally { root.recycle() }
+        val valid = fresh is ShopScreen.Detail && fresh.shop.identity == b.shop.identity && b.token == gate.generation && validRoot(b.window)
+        log.event("quick_action", "TARGET_VALIDATED", valid, if (valid) "" else "STALE_ACTION_TARGET", b.trace)
+        if (!valid) { invalid(b); return false }; return true
+    }
+    private fun invalid(b: Binding): Boolean { log.event("quick_action", "TARGET_REJECTED", false, "STALE_ACTION_TARGET", b.trace); binding = null; detail.hide("STALE_ACTION_TARGET"); toast("화면이 바뀌었어요. 가게를 다시 확인하고 있어요."); analysis = null; schedule(0); showStatus(); return false }
+    private fun quickStatus(b: Binding) {
+        if (saving) return
+        saving = true
+        scope.launch { try {
+            if (!validate(b)) return@launch
+            val state = if (b.record?.status == ShopStatus.BLOCKED) ShopStatus.NORMAL else ShopStatus.BLOCKED
+            log.event("quick_action", "STATUS_BUTTON_CLICK", trace = b.trace)
+            val ticket = app.repository.quickStatus(b.shop.identity, state, b.trace)
+            if (b.token == gate.generation && validRoot(b.window)) undoTicket = ticket
+            toast(if (state == ShopStatus.BLOCKED) "블랙리스트에 등록했어요. 상태 메뉴에서 실행취소할 수 있어요." else "블랙리스트에서 해제했어요. 상태 메뉴에서 실행취소할 수 있어요.")
+            log.event("quick_action", "UI_SAVE_CONFIRMED", trace = b.trace); showStatus()
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { failure("storage", "ROOM_SAVE_ERROR", e, b.trace); toast("저장하지 못했어요. 상태 메뉴에서 오류를 확인해 주세요.") }
+        finally { saving = false } }
+    }
+    private fun openMemo(b: Binding) { scope.launch { try { if (validate(b)) openApp("memo", b) } catch (e: Exception) { if (e is CancellationException) throw e; failure("quick_action", "MEMO_OPEN_ERROR", e, b.trace) } } }
+    private fun openApp(action: String, b: Binding? = null) {
+        val intent = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra("quick_action", action).putExtra("action_id", log.trace()).putExtra("trace_id", b?.trace)
+        if (b != null) { intent.putExtra("shop_name", b.shop.identity.name).putExtra("shop_branch", b.shop.identity.branch).putExtra("shop_no", b.shop.identity.shopNo); b.record?.let { intent.putExtra("shop_id", it.id) } }
+        try { startActivity(intent) } catch (e: RuntimeException) { failure("quick_action", "ACTIVITY_OPEN_FAILED", e) }
+    }
+    private fun showStatus() {
+        if (!targetActive || !usable() || !::status.isInitialized) return
+        val state = health.flow.value; val b = binding
+        val actions = mutableListOf<ServiceStatusOverlayController.Action>()
+        if (b != null) {
+            actions += ServiceStatusOverlayController.Action(if (b.record?.status == ShopStatus.BLOCKED) "블랙 해제" else "블랙 등록") { quickStatus(b) }
+            actions += ServiceStatusOverlayController.Action("메모 작성") { openMemo(b) }
+            if (b.record != null) actions += ServiceStatusOverlayController.Action("기록 열기") { scope.launch { if (validate(b)) openApp("record", b) } }
+        } else actions += ServiceStatusOverlayController.Action("직접 등록") { openApp("manual") }
+        undoTicket?.let { ticket -> actions += ServiceStatusOverlayController.Action("실행취소") { scope.launch {
+            try { val ok = app.repository.undo(ticket, log.trace()); undoTicket = null; toast(if (ok) "이번 변경을 되돌렸어요." else "기록이 이후 변경되어 실행취소하지 않았어요."); showStatus() }
+            catch (e: Exception) { if (e is CancellationException) throw e; failure("storage", "UNDO_ERROR", e); toast("실행취소하지 못했어요.") }
+        } } }
+        actions += ServiceStatusOverlayController.Action("현재 인식 상태 · 진단 기록") { openApp("diagnostics") }
+        val description = (if (b != null) state.shopLabel else "가게 정보 인식 안 됨") +
+            (if (state.error.isNotBlank()) "\n${state.error}" else "\n${state.screen.value}")
+        status.show(if (state.error.isNotBlank()) "확인" else if (b != null) "인식" else "대기", description, prefs.minimized, viewport,
+            b?.trace ?: state.screen.trace, actions) { app.settings.update(prefs.copy(minimized = !prefs.minimized)) }
+    }
+    private fun overlayResult(ok: Boolean, reason: String) { val now = System.currentTimeMillis()
+        health.change { it.copy(overlay = StageStatus(if (ok) "OVERLAY_VISIBLE" else "OVERLAY_FAILED", trace = binding?.trace.orEmpty()),
+            lastOverlay = if (ok) now else it.lastOverlay, lastHealthy = if (ok) now else it.lastHealthy,
+            error = if (!ok) reason else it.error) }
+    }
+    private fun failure(stage: String, reason: String, error: Throwable, trace: String = log.sessionId) {
+        log.event(stage, "EXCEPTION", false, reason, trace, error = error)
+        health.change { it.copy(error = reason) }
+        if (::badges.isInitialized) { badges.hide(reason, trace); detail.hide(reason) }
+        if (targetActive && ::status.isInitialized && stage != "status_overlay") showStatus()
+    }
+    private fun toast(message: String) { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
+    override fun onConfigurationChanged(newConfig: Configuration) { super.onConfigurationChanged(newConfig); invalidate("CONFIGURATION_CHANGED"); if (targetActive) { viewport = Rect(); schedule(85) } }
+    override fun onInterrupt() { log.event("service", "ON_INTERRUPT"); deactivate("SERVICE_INTERRUPTED"); health.change { it.copy(error = "SERVICE_INTERRUPTED") } }
+    override fun onUnbind(intent: Intent?): Boolean { log.event("service", "ON_UNBIND"); connected = false; deactivate("SERVICE_UNBOUND"); health.disconnect("SERVICE_UNBOUND"); return super.onUnbind(intent) }
+    override fun onDestroy() {
+        log.event("service", "ON_DESTROY"); connected = false; aggregateEvents(); deactivate("SERVICE_DESTROYED"); health.disconnect("SERVICE_DESTROYED")
+        if (registered) { unregisterReceiver(screenReceiver); contentResolver.unregisterContentObserver(settingsObserver); registered = false }
+        scope.cancel(); if (::badges.isInitialized) badges.destroy(); super.onDestroy()
+    }
 }

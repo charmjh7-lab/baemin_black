@@ -10,7 +10,7 @@ import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import kotlinx.serialization.json.Json
 
-class ShopRepository(val db: BlackDatabase, val media: MediaStore) {
+class ShopRepository(val db: BlackDatabase, val media: MediaStore, private val logger: com.charmjh7.baeminblack.diagnostics.DiagnosticLogger? = null) {
     private val lock = Mutex()
     val shops = db.dao().observe()
     suspend fun byNumber(no: String): Shop? = withContext(Dispatchers.IO) { db.dao().byNumber(no) }
@@ -28,7 +28,7 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore) {
             shop.id
         }
     } }
-    suspend fun saveNote(note: Note, newPhotos: List<Uri>) = withContext(Dispatchers.IO) { lock.withLock {
+    suspend fun saveNote(note: Note, newPhotos: List<Uri>, draft: Shop? = null): String = withContext(Dispatchers.IO) { lock.withLock {
         LocalDate.parse(note.date)
         require(note.rating == null || note.rating in 1..5) { "만족도는 1~5로 입력해 주세요." }
         require(note.body.isNotBlank() || note.title.isNotBlank() || note.menu.isNotBlank() || note.photos.isNotEmpty() || newPhotos.isNotEmpty()) { "메모나 사진을 추가해 주세요." }
@@ -36,13 +36,59 @@ class ShopRepository(val db: BlackDatabase, val media: MediaStore) {
         try {
             newPhotos.forEach { copied += media.copy(it) }
             val old = db.dao().note(note.id)
-            db.withTransaction {
-                require(db.dao().shop(note.shopId) != null) { "가게가 삭제되었어요." }
-                db.dao().put(note.copy(photos = note.photos + copied, updatedAt = System.currentTimeMillis()))
-                db.dao().touch(note.shopId, System.currentTimeMillis())
+            val trace = logger?.trace().orEmpty()
+            logger?.event("storage", "NOTE_TRANSACTION_STARTED", trace = trace)
+            val shopId = db.withTransaction {
+                val target = if (draft != null) {
+                    val identity = com.charmjh7.baeminblack.matching.ShopIdentity(draft.name, draft.branch, draft.shopNo)
+                    resolve(identity) ?: draft.also { db.dao().put(it) }
+                } else requireNotNull(db.dao().shop(note.shopId)) { "가게가 삭제되었어요." }
+                db.dao().put(note.copy(shopId = target.id, photos = note.photos + copied, updatedAt = System.currentTimeMillis()))
+                db.dao().touch(target.id, System.currentTimeMillis())
+                target.id
             }
+            logger?.event("storage", "NOTE_TRANSACTION_COMMITTED", trace = trace)
             removeUnused(old?.photos.orEmpty() - note.photos.toSet())
-        } catch (e: Exception) { media.remove(copied); throw e }
+            shopId
+        } catch (e: Exception) { logger?.event("storage", "NOTE_TRANSACTION_FAILED", false, "ROOM_OR_MEDIA_ERROR", error = e); media.remove(copied); throw e }
+    } }
+    private suspend fun resolve(identity: com.charmjh7.baeminblack.matching.ShopIdentity): Shop? {
+        val all = db.dao().shops()
+        val match = ShopMatcher.match(identity, all)
+        require(match != null || all.none { ShopMatcher.normalize(it.name) == ShopMatcher.normalize(identity.name) &&
+            (identity.branch.isBlank() || it.branch.isBlank() || ShopMatcher.normalize(it.branch) == ShopMatcher.normalize(identity.branch)) }) { "같은 상호의 기록을 확인한 뒤 직접 등록해 주세요." }
+        return match
+    }
+    data class StatusUndo(val before: Shop?, val after: Shop, val noteIds: Set<String>)
+    suspend fun quickStatus(identity: com.charmjh7.baeminblack.matching.ShopIdentity, status: ShopStatus, trace: String): StatusUndo = withContext(Dispatchers.IO) { lock.withLock {
+        logger?.event("storage", "TRANSACTION_STARTED", trace = trace)
+        try {
+            val ticket = db.withTransaction {
+                require(identity.name.isNotBlank())
+                val before = resolve(identity)
+                logger?.event("storage", "EXISTING_LOOKUP", trace = trace, details = mapOf("exists" to (before != null).toString()))
+                val after = (before ?: Shop(name = identity.name, branch = identity.branch, shopNo = identity.shopNo)).copy(
+                    status = status, updatedAt = maxOf(System.currentTimeMillis(), (before?.updatedAt ?: 0) + 1))
+                db.dao().put(after)
+                StatusUndo(before, after, db.dao().notes().filter { it.shopId == after.id }.map { it.id }.toSet())
+            }
+            logger?.event("storage", if (ticket.before == null) "SHOP_CREATED" else "SHOP_UPDATED", trace = trace)
+            logger?.event("storage", "TRANSACTION_COMMITTED", trace = trace)
+            ticket
+        } catch (e: Exception) { logger?.event("storage", "TRANSACTION_FAILED", false, "ROOM_ERROR", trace, error = e); throw e }
+    } }
+    suspend fun undo(ticket: StatusUndo, trace: String): Boolean = withContext(Dispatchers.IO) { lock.withLock {
+        val restored = db.withTransaction {
+            val current = db.dao().shop(ticket.after.id)
+            val notes = db.dao().notes().filter { it.shopId == ticket.after.id }.map { it.id }.toSet()
+            if (current != ticket.after || notes != ticket.noteIds) false
+            else { if (ticket.before != null) db.dao().put(ticket.before.copy(updatedAt = maxOf(System.currentTimeMillis(), ticket.after.updatedAt + 1)))
+                else if (notes.isEmpty()) db.dao().deleteShop(ticket.after.id) else return@withTransaction false
+                true
+            }
+        }
+        logger?.event("storage", "UNDO", restored, if (restored) "" else "UNDO_CONFLICT", trace)
+        restored
     } }
     suspend fun deleteNote(note: Note) = withContext(Dispatchers.IO) { lock.withLock {
         db.withTransaction { db.dao().deleteNote(note.id); db.dao().touch(note.shopId, System.currentTimeMillis()) }

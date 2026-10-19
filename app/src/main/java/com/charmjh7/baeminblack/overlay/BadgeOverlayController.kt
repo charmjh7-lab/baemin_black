@@ -5,29 +5,40 @@ import android.graphics.*
 import android.view.*
 import com.charmjh7.baeminblack.accessibility.DetectedShop
 
-class BadgeOverlayController(private val context: Context) {
+class BadgeOverlayController(private val context: Context, private val logger: com.charmjh7.baeminblack.diagnostics.DiagnosticLogger? = null,
+    private val result: (Boolean, String) -> Unit = { _, _ -> }) {
     private val wm = context.getSystemService(WindowManager::class.java)
     private val pool = mutableListOf<BadgeView>()
     private val size = (22 * context.resources.displayMetrics.density).toInt()
-    fun update(shops: List<DetectedShop>, viewport: Rect, occluded: List<Rect>) {
-        val positions = shops.mapNotNull { s ->
-            // Place in free card space, never over the name. Fully contained cards only.
-            val gap = (4 * context.resources.displayMetrics.density).toInt()
-            val area = Rect(s.titleBounds.right + gap, s.titleBounds.top, s.titleBounds.right + gap + size, s.titleBounds.top + size)
-            if (!viewport.contains(s.cardBounds) || !s.cardBounds.contains(area) || occluded.any { Rect.intersects(it, s.cardBounds) } || s.occupiedBounds.any { Rect.intersects(it, area) }) null else area
+    private var shown = emptyList<Rect>()
+    fun update(shops: List<DetectedShop>, viewport: Rect, occluded: List<Rect>, trace: String = "") {
+        val positions = shops.mapNotNull { shop ->
+            logger?.event("badge", "POSITION_REQUEST", trace = trace)
+            val placement = BadgePlacement.choose(shop, viewport, occluded, size, (4 * context.resources.displayMetrics.density).toInt())
+            logger?.event("badge", "POSITION_RESULT", placement.area != null, if (placement.area == null) "NO_SAFE_SPACE" else "", trace,
+                mapOf("candidates" to placement.candidates.toString(), "rejected" to placement.rejected.joinToString(","), "selected" to placement.area?.toShortString().orEmpty()))
+            placement.area
         }.distinctBy { it.toShortString() }.take(30)
-        hide()
+        if (positions == shown && pool.count { it.isAttachedToWindow } == positions.size) { logger?.event("badge", "MAINTAINED", trace = trace); return }
+        hide("POSITIONS_CHANGED", trace)
         positions.forEachIndexed { index, rect ->
             val view = pool.getOrNull(index) ?: BadgeView(context).also(pool::add)
             val params = WindowManager.LayoutParams(size, size, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT).apply {
-                gravity = Gravity.TOP or Gravity.LEFT; x = rect.left; y = rect.top
-                title = "배민 블랙 목록 배지"; if (android.os.Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                gravity = Gravity.TOP or Gravity.LEFT; x = rect.left; y = rect.top; title = "배민 블랙 목록 배지"
             }
-            try { wm.addView(view, params) } catch (_: RuntimeException) { /* Window disappearing: next event retries. */ }
+            try {
+                logger?.event("badge", "ADD_VIEW_CALLED", trace = trace); wm.addView(view, params)
+                logger?.event("badge", "ADD_VIEW_SUCCESS", trace = trace); result(true, "")
+            } catch (e: RuntimeException) { logger?.event("badge", "ADD_VIEW_FAILED", false, "WINDOW_MANAGER_EXCEPTION", trace, error = e); result(false, "WINDOW_MANAGER_EXCEPTION") }
         }
+        shown = positions
     }
-    fun hide() { pool.forEach { if (it.isAttachedToWindow) runCatching { wm.removeViewImmediate(it) } } }
+    fun hide(reason: String = "HIDDEN", trace: String = "") {
+        pool.forEach { if (it.isAttachedToWindow) try { wm.removeViewImmediate(it); logger?.event("badge", "REMOVED", reason = reason, trace = trace) }
+            catch (e: RuntimeException) { logger?.event("badge", "REMOVE_FAILED", false, "WINDOW_MANAGER_EXCEPTION", trace, error = e) } }
+        shown = emptyList()
+    }
     fun destroy() { hide(); pool.clear() }
     private class BadgeView(context: Context) : View(context) {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)

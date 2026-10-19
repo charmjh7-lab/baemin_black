@@ -72,6 +72,8 @@ private fun openAccessibility(context: Context) { context.startActivity(Intent(S
         when (route) {
             "main" -> screenState.SaveableStateProvider("main") { MainScreen(vm, rows, enabled, snackbar) }
             "settings" -> SettingsScreen(vm, enabled, snackbar)
+            "diagnostics" -> DiagnosticScreen(vm, enabled, snackbar)
+            "quick_note" -> key(vm.field("draft_id")) { NoteEditor(vm, vm.draftShop(), null, snackbar) }
             "shop" -> if (selected.isNotBlank() && current == null) MissingScreen(vm, rows == null, snackbar) else key(selected, vm.field("draft_id")) { ShopEditor(vm, current?.shop, snackbar) }
             "note" -> if (current != null) key(selected, noteId) { NoteEditor(vm, current.shop, current.notes.firstOrNull { it.id == noteId }, snackbar) } else MissingScreen(vm, rows == null, snackbar)
             "detail" -> if (current != null) DetailScreen(vm, current, snackbar) else MissingScreen(vm, rows == null, snackbar)
@@ -92,16 +94,7 @@ private fun openAccessibility(context: Context) { context.startActivity(Intent(S
     Scaffold(topBar = { TopAppBar(title = { Text("배민 블랙", fontWeight = FontWeight.SemiBold) }, actions = { IconButton(onClick = { vm.go("settings") }) { Icon(Icons.Outlined.Settings, "설정") } }) },
         floatingActionButton = { ExtendedFloatingActionButton(onClick = { vm.newShop() }, icon = { Icon(Icons.Outlined.Add, null) }, text = { Text("가게 등록") }) }, snackbarHost = { SnackbarHost(snack) }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            Surface(color = if (enabled) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(if (enabled) Icons.Outlined.CheckCircle else Icons.Outlined.Info, null, Modifier.size(22.dp))
-                    Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                        Text(if (enabled) "접근성 서비스 켜짐" else "접근성 서비스 꺼짐", style = MaterialTheme.typography.labelLarge)
-                        if (!enabled) Text("가게 이름과 위치를 읽어 배지를 표시해요. 메모는 권한 없이도 쓸 수 있어요.", style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (!enabled) TextButton(onClick = { openAccessibility(context) }) { Text("켜기") }
-                }
-            }
+            ServiceHealthPanel(vm, enabled) { openAccessibility(context) }
             OutlinedTextField(query, { query = it }, label = { Text("가게·지점·별칭·메모 검색") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, "검색어 지우기") } }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("ALL" to "전체", "BLOCKED" to "블랙리스트", "CAUTION" to "주의", "FAVORITE" to "즐겨찾기").forEach { (key, label) -> FilterChip(filter == key, onClick = { filter = key }, label = { Text(label) }) }
@@ -219,7 +212,7 @@ private fun openAccessibility(context: Context) { context.startActivity(Intent(S
         additions = ArrayList((additions + uris.map(Uri::toString)).distinct())
     }
     val dirty = date != (existing?.date ?: LocalDate.now().toString()) || title != existing?.title.orEmpty() || menu != existing?.menu.orEmpty() || body != existing?.body.orEmpty() || rating != existing?.rating?.toString().orEmpty() || photos != existing?.photos.orEmpty() || additions.isNotEmpty()
-    val close = { if (!vm.busy) { if (dirty) discard = true else vm.go("detail", shop.id) } }
+    val close = { if (!vm.busy) { if (dirty) discard = true else vm.cancelNote(shop.id) } }
     BackHandler(onBack = close)
     EditorFrame(if (existing == null) "메모 추가" else "메모 수정", vm.busy, snack, close, save = {
         if (runCatching { LocalDate.parse(date) }.isFailure) vm.message = "날짜를 YYYY-MM-DD 형식으로 입력해 주세요."
@@ -241,7 +234,7 @@ private fun openAccessibility(context: Context) { context.startActivity(Intent(S
             items(additions, key = { "new:$it" }) { uri -> PhotoTile(Uri.parse(uri), { additions = ArrayList(additions - uri) }) }
         }
     }
-    if (discard) DiscardDialog({ discard = false }, { discard = false; vm.go("detail", shop.id) })
+    if (discard) DiscardDialog({ discard = false }, { discard = false; vm.cancelNote(shop.id) })
 }
 @Composable private fun PhotoTile(model: Any, remove: () -> Unit) { Column(horizontalAlignment = Alignment.CenterHorizontally) { AsyncImage(model, "첨부 사진", Modifier.size(96.dp)); TextButton(onClick = remove) { Text("첨부 해제") } } }
 @Composable private fun DiscardDialog(cancel: () -> Unit, leave: () -> Unit) { AlertDialog(onDismissRequest = cancel, title = { Text("작성을 그만둘까요?") }, text = { Text("저장하지 않은 변경사항은 사라져요.") }, dismissButton = { TextButton(onClick = cancel) { Text("계속 작성") } }, confirmButton = { TextButton(onClick = leave) { Text("나가기") } }) }
@@ -266,6 +259,7 @@ private fun openAccessibility(context: Context) { context.startActivity(Intent(S
     BackHandler { vm.go("main") }
     Scaffold(topBar = { TopAppBar(title = { Text("설정") }, navigationIcon = { BackButton { vm.go("main") } }) }, snackbarHost = { SnackbarHost(snack) }) { padding ->
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(onClick = { vm.go("diagnostics") }, modifier = Modifier.fillMaxWidth()) { Text("진단 및 오류 기록") }
             Text("배민 화면 표시", style = MaterialTheme.typography.titleMedium)
             ListItem(headlineContent = { Text("접근성 서비스") }, supportingContent = { Text(if (enabled) "활성화됨" else "비활성화됨") }, trailingContent = { TextButton(onClick = { openAccessibility(context) }) { Text("설정 열기") } })
             SettingSwitch("목록 블랙리스트 배지", settings.badges) { vm.updateSettings(settings.copy(badges = it)) }
